@@ -19,3 +19,6 @@ state.db
 state.db-shm
 state.db-wal
 .env
+skills/x-monitor/cookies.json
+skills/x-monitor/1.py
+skills/x-monitor/debug_kaboruo.png

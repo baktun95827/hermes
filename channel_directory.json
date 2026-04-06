@@ -1,0 +1,17 @@
+{
+  "updated_at": "2026-04-06T09:47:20.154328",
+  "platforms": {
+    "telegram": [
+      {
+        "id": "5971509471",
+        "name": "taisha",
+        "type": "dm",
+        "thread_id": null
+      }
+    ],
+    "whatsapp": [],
+    "signal": [],
+    "email": [],
+    "sms": []
+  }
+}

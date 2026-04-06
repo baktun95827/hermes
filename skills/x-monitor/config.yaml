@@ -1,0 +1,25 @@
+# X Monitor 配置文件
+# 复制为 config.yaml 并修改
+
+# 要监控的账号（不带 @）
+accounts:
+  - "elonmusk"
+  - "kaboruo"
+  # - "添加更多账号"
+
+# 每个账号拉取的推文数量
+tweets_per_account: 20
+
+# 只看最近 N 小时内的推文（0 = 不过滤）
+lookback_hours: 4
+
+# 认证方式
+auth:
+  # cookies 文件路径（从浏览器导出）
+  cookies_file: "cookies.json"
+
+# 发现模式：自动推荐相关账号
+discovery:
+  enabled: true
+  # 被提及/转推次数 >= 这个值才推荐
+  min_interactions: 3
