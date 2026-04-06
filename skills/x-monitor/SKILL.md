@@ -1,6 +1,6 @@
 ---
 name: x-monitor
-description: Monitor configured X accounts with Playwright, generate Telegram-ready Chinese briefs grouped by topic, and persist MEMORY_UPDATE back into state.json for long-running Hermes workflows.
+description: Monitor configured X accounts with Playwright, generate Telegram-ready Chinese briefs grouped by topic, and persist MEMORY_UPDATE into per-account and per-theme memory files for long-running Hermes workflows.
 metadata:
   hermes:
     tags: [x, twitter, monitoring, telegram, playwright, cron, memory]
@@ -21,7 +21,8 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 ## Files
 
 - `monitor.py`: collects tweets, exposes the latest artifact manifest, and applies `MEMORY_UPDATE`
-- `config.yaml`: monitored accounts, output paths, and topic hints
+- `config.yaml`: monitored accounts, memory/output paths, and topic hints
+- `memory/index.json`: synced index of all account/theme memory files
 - `claude.md`: deeper architecture notes; read it only when patching selectors or data flow
 
 ## Setup
@@ -75,6 +76,8 @@ Generate a Chinese brief from that prompt with this output discipline:
 
 - Produce a Telegram-ready brief first
 - Append `### MEMORY_UPDATE` at the end of the full saved summary
+- Use `PRIMARY_THEMES` for stable一级主题
+- Use `SECONDARY_THEMES` to map each一级主题 to more specific二级主题
 - Send only the content before `### MEMORY_UPDATE` to Telegram
 
 After generating the summary, save the full text to the summary path returned by:
@@ -91,7 +94,10 @@ python3 ~/.hermes/skills/x-monitor/monitor.py apply-memory --config ~/.hermes/sk
 
 `apply-memory` parses the `MEMORY_UPDATE` block and writes:
 
-- updated `state.json`
+- updated `state.json` for去重/last_run
+- updated `memory/index.json`
+- `memory/accounts/<username>.json`
+- `memory/themes/<primary-theme>.json`
 - a structured `memory_update_*.json`
 - refreshed `latest_run.json`
 
@@ -109,6 +115,7 @@ Prefer using the `latest` subcommand instead of guessing filenames or shell-glob
 ## Guardrails
 
 - Always use absolute paths when Hermes is running from cron or the gateway
+- Commit `memory/` when you want memory to move with the repo across VPS hosts
 - Never commit `cookies.json`, `state.json`, `latest_run.json`, `reports/`, or debug screenshots
 - If every account lands on a login wall, ask the user to refresh cookies before retrying
 - If pages load but visible tweet count is zero for all accounts, inspect `debug_*.png` and `claude.md` before changing selectors

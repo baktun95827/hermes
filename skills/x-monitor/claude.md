@@ -28,12 +28,13 @@ X Monitor 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统�
 │                       ▼         └───────┬────────┘  │
 │                 ┌───────────┐           │           │
 │                 │ state.json│           ▼           │
-│                 │ 去重+记忆  │     ┌──────────┐     │
+│                 │ 去重状态   │     ┌──────────┐     │
 │                 └───────────┘     │  Hermes   │     │
-│                                   │  LLM 总结  │     │
-│                                   └─────┬────┘     │
-│                                         │          │
-│                                         ▼          │
+│                 ┌───────────┐     │  LLM 总结  │     │
+│                 │ memory/   │◀────┴─────┬────┘     │
+│                 │ 账号/主题记忆│           │          │
+│                 └───────────┘           ▼           │
+│                                   ┌──────────┐     │
 │                                   ┌──────────┐     │
 │                                   │ Telegram  │     │
 │                                   │ Gateway   │     │
@@ -140,17 +141,28 @@ X Monitor 的输出是：
 
 ### 4. Agent 记忆
 
-`state.json` 不只做去重，还承担记忆功能：
+去重状态与分析记忆已经拆开：
 
-**主题历史（theme_history）：** 记录每次运行识别出的主题列表。下次运行时，LLM 的 prompt 中会包含"近期反复出现的主题"，让它能识别趋势变化——"这个话题上周就在讨论了，本周热度继续上升"。
+**运行状态（state.json）：** 只记录 `seen_ids` 和 `last_run`，避免把长期记忆和运行状态混在一起。
 
-**账号画像（account_notes）：** 每次 LLM 总结后，输出一段 `MEMORY_UPDATE`，其中包含对每个账号的一句话画像更新。例如：
+**账号记忆（memory/accounts/*.json）：** 每个账号一个文件，保存最新画像和简短历史。
+
+**主题记忆（memory/themes/*.json）：** 每个一级主题一个文件，内部维护该一级主题下的二级主题列表、出现次数和最近出现时间。
+
+**索引（memory/index.json）：** 汇总所有账号记忆和主题记忆文件，方便跨 VPS 同步后快速恢复和遍历。
+
+每次 LLM 总结后，输出一段 `MEMORY_UPDATE`，其中包含对每个账号的一句话画像更新，以及一级/二级主题结构。例如：
 
 ```
+PRIMARY_THEMES: AI/人工智能, Space/航天
+SECONDARY_THEMES:
+AI/人工智能: Grok, AI监管
+Space/航天: Starship
+ACCOUNT_NOTES:
 @elonmusk: 近期主要讨论政府效率（DOGE）、AI（Grok）、航天（Starship），偶尔发 meme
 ```
 
-这些画像会持久化，下次运行时 LLM 能看到历史上下文，从而产出更有深度的分析（"与上周相比，该账号从 AI 话题转向了政策讨论"）。
+这些记忆会持久化，下次运行时 LLM 能看到历史上下文，从而产出更有深度的分析（"与上周相比，该账号从 AI 话题转向了政策讨论"）。
 
 ### 5. 账号发现
 
@@ -171,7 +183,13 @@ X Monitor 的输出是：
 ├── monitor.py              # 主脚本
 ├── config.yaml             # 配置文件
 ├── cookies.json            # X 登录 cookies（敏感，不要提交到 git）
-├── state.json              # 持久化状态（去重 + 记忆，自动维护）
+├── state.json              # 持久化状态（去重 + last_run）
+├── memory/                 # 长期记忆目录
+│   ├── accounts/
+│   │   └── elonmusk.json   # 一个账号一个文件
+│   └── themes/
+│       └── AI_人工智能.json  # 一个一级主题一个文件，内部含二级主题
+│   └── index.json          # 账号/主题记忆总索引
 ├── latest_run.json         # 最近一次运行的产物索引
 ├── SKILL.md                # Hermes skill 描述
 ├── reports/                # 输出目录
@@ -236,6 +254,15 @@ auth:
 # 去重状态文件
 state_file: "state.json"
 
+# 记忆目录
+memory_dir: "memory"
+
+# 一级主题别名归一化
+theme_aliases:
+  "AI/人工智能":
+    - "AI"
+    - "人工智能"
+
 # 预定义主题方向（可选，引导 LLM 的归类方向）
 themes:
   - "AI/人工智能"
@@ -291,7 +318,7 @@ Playwright 模拟真实浏览器行为，风险远低于 API scraper。但仍需
 
 - **把 apply-memory 串进固定 cron workflow：** 目前脚本已支持自动解析 MEMORY_UPDATE，下一步可继续把 Hermes 定时任务模板也标准化。
 - **Telegram 消息格式优化：** 根据 Telegram 的 Markdown 格式限制调整输出，让图片以内联预览显示。
-- **多次运行的趋势报告：** 每周生成一份周报，基于 theme_history 分析主题热度变化。
+- **多次运行的趋势报告：** 每周生成一份周报，基于 memory/themes 里的一级/二级主题变化分析热度趋势。
 
 ### 中期可做
 

@@ -21,6 +21,9 @@ auth:
 # 去重状态文件（自动维护，不需要手动编辑）
 state_file: "state.json"
 
+# 记忆目录：账号一文件，一级主题一文件
+memory_dir: "memory"
+
 # 输出目录（prompt / report / summary / memory_update）
 output_dir: "reports"
 
@@ -35,6 +38,18 @@ themes:
   - "科技行业"
   - "Space/航天"
   # 添加你关注的方向
+
+# 一级主题别名归一化：模型写出这些别名时，会落回对应的 canonical 主题文件
+theme_aliases:
+  "AI/人工智能":
+    - "AI"
+    - "人工智能"
+    - "大模型"
+    - "LLM"
+  "Space/航天":
+    - "Space"
+    - "航天"
+    - "火箭"
 
 # 发现模式
 discovery:
