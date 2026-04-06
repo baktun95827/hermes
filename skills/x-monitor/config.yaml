@@ -21,6 +21,12 @@ auth:
 # 去重状态文件（自动维护，不需要手动编辑）
 state_file: "state.json"
 
+# 输出目录（prompt / report / summary / memory_update）
+output_dir: "reports"
+
+# 最近一次运行的索引文件，供 Hermes 稳定读取最新产物
+latest_run_file: "latest_run.json"
+
 # 预定义主题方向（LLM 会优先往这些类别归类，也可留空让它自动识别）
 themes:
   - "AI/人工智能"

@@ -22,3 +22,8 @@ state.db-wal
 skills/x-monitor/cookies.json
 skills/x-monitor/1.py
 skills/x-monitor/debug_kaboruo.png
+skills/x-monitor/state.json
+skills/x-monitor/latest_run.json
+skills/x-monitor/reports/
+skills/x-monitor/debug_*.png
+skills/x-monitor/__pycache__/

@@ -23,6 +23,8 @@ X Monitor 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统�
 │  │ 定时触发  │   │  主脚本    │   │ prompt_xxx.txt │  │
 │  └──────────┘   └─────┬─────┘   │ data_xxx.json  │  │
 │                       │         │ report_xxx.txt  │  │
+│                       │         │ summary_xxx.txt │  │
+│                       │         │ memory_update...│  │
 │                       ▼         └───────┬────────┘  │
 │                 ┌───────────┐           │           │
 │                 │ state.json│           ▼           │
@@ -170,11 +172,14 @@ X Monitor 的输出是：
 ├── config.yaml             # 配置文件
 ├── cookies.json            # X 登录 cookies（敏感，不要提交到 git）
 ├── state.json              # 持久化状态（去重 + 记忆，自动维护）
+├── latest_run.json         # 最近一次运行的产物索引
 ├── SKILL.md                # Hermes skill 描述
 ├── reports/                # 输出目录
 │   ├── data_YYYYMMDD_HHMMSS.json     # 原始数据（JSON）
 │   ├── prompt_YYYYMMDD_HHMMSS.txt    # LLM prompt
 │   ├── report_YYYYMMDD_HHMMSS.txt    # 人类可读报告
+│   ├── summary_YYYYMMDD_HHMMSS.txt   # Hermes 生成的完整总结（含 MEMORY_UPDATE）
+│   ├── memory_update_YYYYMMDD_HHMMSS.json  # 解析后的记忆更新
 │   └── warning_YYYYMMDD_HHMMSS.txt   # 告警（仅在异常时生成）
 └── debug_*.png             # 调试截图（仅在加载失败时生成）
 ```
@@ -187,7 +192,7 @@ X Monitor 的输出是：
 
 ```bash
 cd ~/.hermes/skills/x-monitor
-python3 monitor.py --config config.yaml
+python3 monitor.py collect --config config.yaml
 ```
 
 ### 通过 Hermes 定时运行
@@ -195,9 +200,12 @@ python3 monitor.py --config config.yaml
 在 Hermes 对话中：
 
 ```
-每 2 小时运行 python3 ~/.hermes/skills/x-monitor/monitor.py --config ~/.hermes/skills/x-monitor/config.yaml，
-读取 reports 目录下最新的 prompt 文件，用中文总结后发到 Telegram。
-如果发现 warning 文件，也发到 Telegram 提醒我更新 cookies。
+每 2 小时运行 python3 ~/.hermes/skills/x-monitor/monitor.py collect --config ~/.hermes/skills/x-monitor/config.yaml。
+然后读取 latest_run.json 指向的最新 prompt 文件，用中文生成简报。
+发送到 Telegram 时不要包含 MEMORY_UPDATE 段。
+把完整总结保存到 latest_run.json 里的 summary 路径，
+再运行 python3 ~/.hermes/skills/x-monitor/monitor.py apply-memory --config ~/.hermes/skills/x-monitor/config.yaml --summary-file <summary_path>。
+如果 latest_run.json 里有 warning 文件，也发到 Telegram 提醒我检查 cookies 或页面状态。
 ```
 
 Hermes 会创建 cron job 自动执行。
@@ -281,7 +289,7 @@ Playwright 模拟真实浏览器行为，风险远低于 API scraper。但仍需
 
 ### 短期可做
 
-- **自动解析 MEMORY_UPDATE：** 目前 LLM 输出的记忆更新段需要手动或由 Hermes 解析后写入 state.json。可以增加一个后处理步骤自动完成。
+- **把 apply-memory 串进固定 cron workflow：** 目前脚本已支持自动解析 MEMORY_UPDATE，下一步可继续把 Hermes 定时任务模板也标准化。
 - **Telegram 消息格式优化：** 根据 Telegram 的 Markdown 格式限制调整输出，让图片以内联预览显示。
 - **多次运行的趋势报告：** 每周生成一份周报，基于 theme_history 分析主题热度变化。
 

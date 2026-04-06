@@ -1,0 +1,7 @@
+interface:
+  display_name: "X Monitor"
+  short_description: "Monitor X accounts, cluster new posts, and keep running memory."
+  default_prompt: "Use $x-monitor to collect recent posts from my configured X accounts, produce a Chinese topic brief, and persist the MEMORY_UPDATE back into the skill state."
+
+policy:
+  allow_implicit_invocation: true
