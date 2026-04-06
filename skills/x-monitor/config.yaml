@@ -1,25 +1,36 @@
-# X Monitor 配置文件
-# 复制为 config.yaml 并修改
+# X Monitor v2 配置文件
 
-# 要监控的账号（不带 @）
+# 要监控的账号
 accounts:
   - "elonmusk"
-  - "kaboruo"
-  # - "添加更多账号"
+  # - "其他账号"
 
-# 每个账号拉取的推文数量
-tweets_per_account: 20
+# 每个账号拉取推文数
+tweets_per_account: 15
 
-# 只看最近 N 小时内的推文（0 = 不过滤）
-lookback_hours: 4
+# 滚动次数（越多加载越多推文，但越慢）
+scroll_count: 5
 
-# 认证方式
+# 账号间延迟（秒）
+delay_between_accounts: 5
+
+# 认证
 auth:
-  # cookies 文件路径（从浏览器导出）
   cookies_file: "cookies.json"
 
-# 发现模式：自动推荐相关账号
+# 去重状态文件（自动维护，不需要手动编辑）
+state_file: "state.json"
+
+# 预定义主题方向（LLM 会优先往这些类别归类，也可留空让它自动识别）
+themes:
+  - "AI/人工智能"
+  - "加密货币/区块链"
+  - "地缘政治"
+  - "科技行业"
+  - "Space/航天"
+  # 添加你关注的方向
+
+# 发现模式
 discovery:
   enabled: true
-  # 被提及/转推次数 >= 这个值才推荐
   min_interactions: 3
