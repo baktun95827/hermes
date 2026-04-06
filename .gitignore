@@ -1,0 +1,21 @@
+# Hermes 源代码（已在 GitHub 公开）
+hermes-agent/
+
+# 敏感凭证
+auth.json
+auth.lock
+*.tw_session
+sessions/
+
+# 缓存和临时文件
+cache/
+image_cache/
+audio_cache/
+logs/
+*.pid
+
+# 数据库文件（太大且会频繁变动）
+state.db
+state.db-shm
+state.db-wal
+.env
