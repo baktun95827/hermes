@@ -26,15 +26,14 @@ X Monitor 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统�
 │                       │         │ summary_xxx.txt │  │
 │                       │         │ memory_update...│  │
 │                       ▼         └───────┬────────┘  │
-│                 ┌───────────┐           │           │
-│                 │memory/state│           ▼           │
-│                 │  去重状态   │     ┌──────────┐     │
+│                 ┌────────────────┐      │           │
+│                 │memory/state.json│      ▼           │
+│                 │  去重状态/同步   │  ┌──────────┐   │
 │                 └───────────┘     │  Hermes   │     │
 │                 ┌───────────┐     │  LLM 总结  │     │
 │                 │ memory/   │◀────┴─────┬────┘     │
 │                 │ 账号/主题记忆│           │          │
 │                 └───────────┘           ▼           │
-│                                   ┌──────────┐     │
 │                                   ┌──────────┐     │
 │                                   │ Telegram  │     │
 │                                   │ Gateway   │     │
@@ -83,79 +82,92 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 
 ## 功能详解
 
-### 1. 推文抓取
+### 1. 脚本接口与产物契约
 
-脚本通过 Playwright 打开每个监控账号的 X 个人页面，模拟滚动加载，然后从 DOM 中提取：
+当前 `monitor.py` 是一个三段式 CLI，而不是单次跑完所有逻辑的脚本：
 
-| 字段 | 提取方式 | 说明 |
+- `collect`：抓取账号页面，生成 `data/prompt/report/summary/memory_update/warning` 等产物路径，并刷新 `latest_run.json`
+- `latest`：稳定读取 `latest_run.json`，避免 Hermes 通过 glob 猜文件名
+- `apply-memory`：解析 summary 尾部的 `MEMORY_UPDATE`，做主题归一化、幂等检查、记忆回写
+
+这三个命令共同构成 Hermes 的标准编排链路：
+
+1. `collect`
+2. `latest --field new_tweet_count`
+3. `latest --field prompt`
+4. 生成 summary
+5. `apply-memory`
+
+其中 `latest_run.json` 是关键的“控制面索引”。它会记录当前 run 的：
+
+- `data`
+- `prompt`
+- `report`
+- `summary`
+- `memory_update`
+- `memory_index`
+- `state`
+- `warning`
+- `memory_dir`
+
+所以 Hermes 不需要猜目录结构，只需要读取 `latest` 输出。
+
+### 2. 推文抓取
+
+脚本通过 Playwright 打开每个监控账号的 X 页面，模拟滚动后从 DOM 里提取结构化推文。当前实现已经不是单一路径抓取，而是“主路径 + fallback”。
+
+| 字段 | 当前实现 | 说明 |
 |------|---------|------|
-| 完整文本 | `[data-testid="tweetText"]` 的 `innerText` | 保留换行，不截断 |
-| 推文 ID | 从 `<time>` 父级 `<a>` 的 href 中正则提取 | 用于去重和生成链接 |
-| 发布时间 | `<time>` 元素的 `datetime` 属性 | ISO 格式 |
-| 图片 URL | `[data-testid="tweetPhoto"] img` 的 `src` | 自动替换为高清版（`name=large`） |
-| 视频标记 | 检测 `[data-testid="videoPlayer"]` 是否存在 | 布尔值 |
-| 互动数据 | reply/retweet/like 按钮的 `aria-label` | 从中正则提取数字 |
-| @提及 | 正文中正则匹配 `@\w+` | 用于发现引擎 |
-| 引用推文 | 检测嵌套的 `tweetText` 元素 | 提取引用的原文 |
-| 转推标记 | 检测 `socialContext` 元素或 `RT @` 前缀 | 布尔值 |
+| 正文文本 | 优先 `[data-testid="tweetText"]`，其次 `div[lang]` | 避免因为 `tweetText` 缺失漏掉正文 |
+| 纯媒体推文文本 | 若无正文但有图片/视频，生成 `[媒体推文：…]` 占位 | 防止图片/视频推文被完全丢弃 |
+| 推文 ID / 作者 / 链接 | 优先 `<time>` 上层 `<a>`，其次扫描任意 `a[href*="/status/"]` | 对 DOM 细节变化更稳 |
+| 发布时间 | `<time>` 的 `datetime` | ISO 格式 |
+| 图片 URL | `[data-testid="tweetPhoto"] img` 的 `src` | 自动替换为 `name=large` |
+| 视频标记 | `[data-testid="videoPlayer"]` | 布尔值 |
+| 互动数据 | 优先按钮 `aria-label`，其次按钮文本 | 兼容更多页面状态 |
+| @提及 | 正文正则匹配 `@\w+` | 用于发现引擎 |
+| 引用推文文本 | 多个正文节点时取后者作为 `quoted_text` | 保留引用上下文 |
+| 转推标记 | `socialContext` 或 `RT @` 前缀 | 布尔值 |
 
-每个账号之间有可配置的延迟（默认 5 秒），防止触发限流。
+每个账号之间有可配置的延迟，默认 5 秒，目的是降低限流和登录态波动风险。
 
-### 2. 去重机制
+### 3. 去重状态与迁移
 
-系统维护一个 `memory/state.json` 文件，记录所有已处理过的推文 ID：
+系统现在把运行状态放在 `memory/state.json`，而不是根目录 `state.json`。文件结构如下：
 
 ```json
 {
   "version": 1,
-  "seen_ids": ["1234567890", "1234567891", ...],
+  "seen_ids": ["1234567890", "1234567891"],
   "last_run": "2026-04-06T07:22:00+00:00",
   "updated_at": "2026-04-06T07:22:03+00:00"
 }
 ```
 
-每次抓取时，已存在于 `seen_ids` 中的推文会被跳过。列表自动截断到最近 2000 条，防止文件无限膨胀。
+语义是：
 
-这样做的意义是：去重状态可以随 GitHub 一起同步。换 VPS 后，系统不会把历史推文重新当成“新推文”。
+- `seen_ids`：已经处理过的 tweet id，用于跨轮去重
+- `last_run`：兼容字段，保留旧语义
+- `updated_at`：状态文件最近写入时间
 
-这意味着：如果你每 2 小时跑一次，每次报告只包含**上次运行后的新推文**。不会重复推送你已经看过的内容。
+当前实现还保留了旧状态迁移能力：
 
-### 3. 主题归类（LLM 驱动）
+- 如果新路径 `memory/state.json` 不存在，会尝试读取旧的根目录 `state.json`
+- 如果旧 state 里还残留 `account_notes` 或 `theme_history`，会迁移进新的记忆文件结构
+- 迁移后会把旧的长期记忆字段从 state 中清掉
 
-这是 X Monitor 与普通推文聚合工具的核心区别。
+需要注意的是：当前代码在 `collect` 和 `apply-memory` 阶段都会保存 state，但不会主动推进 `last_run`。因此在实际运行里，`updated_at` 才是更可靠的“最近一次状态写入时间”，而 `last_run` 主要用于兼容旧数据结构。
 
-传统工具的输出是：
-```
-@elonmusk: 推文1、推文2、推文3
-@account2: 推文4、推文5
-```
+这样做的目的有两个：
 
-X Monitor 的输出是：
-```
-🔖 主题: AI 发展
-  - Elon Musk 宣布 Grok-3 即将发布 (@elonmusk)
-  - Sam Altman 回应关于 AGI 时间线的质疑 (@sama)
-  
-🔖 主题: 政府与监管
-  - 美联邦支出 10 年增长 40%，Musk 质疑效率 (@elonmusk)
-  - ...
-```
+- 运行状态和长期记忆解耦
+- `memory/` 可直接提交到 GitHub，换 VPS 后不会把旧推文重新当成“新推文”
 
-实现方式：脚本生成一个精心设计的 LLM prompt，包含所有推文的完整数据，要求 LLM 按主题而非按账号组织输出。用户可以在 `config.yaml` 中预定义关注的主题方向（如 AI、crypto、地缘政治），LLM 会优先归入这些类别，同时保留创建新类别的自由度。
+### 4. 主题归类与 MEMORY_UPDATE 协议
 
-### 4. Agent 记忆
+X Monitor 的核心不是“按账号罗列推文”，而是“按主题重组多个账号的动态”。因此 `collect` 生成的 prompt 会要求模型输出 Telegram 正文，以及一个只供系统消费的 `MEMORY_UPDATE`。
 
-去重状态与分析记忆已经拆开：
-
-**运行状态（memory/state.json）：** 只记录 `seen_ids`、`last_run` 和 `updated_at`，并随仓库同步。
-
-**账号记忆（memory/accounts/*.json）：** 每个账号一个文件，保存最新画像和简短历史。
-
-**主题记忆（memory/themes/*.json）：** 每个一级主题一个文件，内部维护该一级主题下的二级主题列表、出现次数和最近出现时间。
-
-**索引（memory/index.json）：** 汇总所有账号记忆和主题记忆文件，方便跨 VPS 同步后快速恢复和遍历。
-
-每次 LLM 总结后，输出一段严格 JSON 的 `MEMORY_UPDATE`，其中包含对每个账号的一句话画像更新，以及一级/二级主题结构。例如：
+现在的正式协议是严格 JSON。例如：
 
 ```json
 {
@@ -165,27 +177,119 @@ X Monitor 的输出是：
     "Space/航天": ["Starship"]
   },
   "account_notes": {
-    "elonmusk": "近期主要讨论政府效率（DOGE）、AI（Grok）、航天（Starship），偶尔发 meme"
+    "elonmusk": "近期主要讨论政府效率、AI 和航天。"
   }
 }
 ```
 
-落盘前会先做两层归一化：
+其中：
 
-- 一级主题别名归一化，例如 `AI`、`人工智能` → `AI/人工智能`
-- 二级主题按所属一级主题归一化，例如 `AI policy`、`AI政策` → `AI监管`
+- `primary_themes`：稳定的一级主题
+- `secondary_themes`：每个一级主题下的二级主题
+- `account_notes`：账号画像，key 使用不带 `@` 的用户名
 
-并且 `apply-memory` 对同一份 summary 是幂等的：重复执行不会把主题出现次数重复累计。
+解析器仍保留向后兼容：
 
-### 5. 账号发现
+- 优先读取严格 JSON
+- 如果 JSON 不合法或不存在，再回退解析旧的半结构化文本格式
 
-发现引擎统计所有推文中 @提及的用户名频次。如果某个非监控列表中的账号被多次提及（超过 `min_interactions` 阈值），系统会推荐你关注。
+这意味着历史 summary 仍可回放，但新流程的目标协议已经完全转向 JSON。
 
-这解决了信息茧房问题——你不需要自己去找新的信息源，系统会根据你已关注的人的互动网络，自动发现相关的新账号。
+### 5. 记忆结构、归一化与幂等
 
-### 6. Cookies 健康检查
+记忆已经从单文件拆成了多文件结构：
 
-如果一次运行中所有账号都没抓到任何推文，系统会生成一个 warning 文件。Hermes 可以检测到这个文件并通过 Telegram 发送告警，提醒你更新 cookies。
+- `memory/state.json`：去重和运行状态
+- `memory/accounts/<username>.json`：单账号记忆
+- `memory/themes/<primary-theme>.json`：单一级主题记忆
+- `memory/index.json`：汇总索引
+
+当前记忆写入前会做两层归一化：
+
+- 一级主题别名归一化  
+  例如 `AI`、`人工智能`、`LLM` 可统一落到 `AI/人工智能`
+- 二级主题按一级主题分别归一化  
+  例如在 `AI/人工智能` 下面，`AI policy`、`AI政策` 可归一到 `AI监管`
+
+幂等机制是当前实现的关键变化。`apply-memory` 会基于 summary 内容和 run 身份生成稳定 `update_id`，并把它写入账号文件和主题文件的：
+
+- `applied_update_ids`
+- `last_update_id`
+
+因此同一份 summary 重跑时：
+
+- 不会重复增加 `run_count`
+- 不会重复增加二级主题出现次数
+- 不会重复追加账号 note 历史
+
+这使得 Hermes 的定时任务在重试或补跑时更安全。
+
+此外，`reports/memory_update_*.json` 会输出一份结构化回写结果，至少包含：
+
+- `update_id`
+- `summary_file`
+- `state_file`
+- `primary_themes`
+- `secondary_themes`
+- `account_notes`
+- `theme_updates`
+- `account_updates`
+- `already_applied`
+
+### 6. 索引、锁与原子写
+
+当前实现已经不是“直接覆写 JSON 文件”的脆弱模式，而是补上了几层工程保护：
+
+- **索引文件：** `memory/index.json` 汇总所有账号和主题文件，供快速遍历和跨机同步后恢复
+- **索引版本：** 当前仓库初始化的 `memory/index.json` 是 `version: 2`
+- **本地写锁：** `memory/.write.lock` 防止同一台机器上的并发任务同时写记忆
+- **原子写：** 关键 JSON/TXT 落盘通过“临时文件 + `os.replace`”完成，减少异常退出时的半截文件风险
+
+这里要注意一个边界：
+
+- 本地 `.write.lock` 只能解决“同一台机器上的并发写”
+- 它不能解决“两台 VPS 同时改记忆后再 git push”的冲突
+
+也就是说，多 VPS 场景下真正需要注意的是 Git merge，而不是本地文件锁。
+
+### 7. latest_run.json 与 Hermes 编排
+
+`latest_run.json` 现在不只是“上次跑过的记录”，而是 Hermes 工作流的稳定入口。
+
+`collect` 完成后，它会写入：
+
+- 本轮 run id
+- 产物路径
+- 新推文数量
+- warning 路径
+- `memory_index` 路径
+- `state` 路径
+
+`apply-memory` 完成后，它还会补充：
+
+- `memory_update_applied`
+- 结构化 `memory_update` 结果
+- 最新 `summary` 的 canonical 路径
+
+当前实现还做了一件细节处理：
+
+- 如果 `latest_run.json` 已经声明了某轮 canonical 的 `summary_<run_id>.txt`
+- 而 `apply-memory` 收到的是另一个临时 summary 路径
+- 它会优先把内容回收到 canonical summary 路径，再继续生成 `update_id`
+
+这样同一轮任务的 summary 路径就不会在多次运行之间来回漂移。
+
+### 8. 账号发现、告警与健康检查
+
+发现引擎会统计所有新推文中的 @提及。如果某个不在监控列表里的账号被高频提及，就会进入推荐列表。
+
+告警逻辑当前分成三类：
+
+- **所有账号都落到登录墙**
+- **所有账号都抓取异常**
+- **所有账号页面都看不到可见推文**
+
+只有当“所有账号都没有可见推文”时才会生成 warning。只要某个账号页面里确实有可见 tweet，系统就不会把“本轮新增为 0”误判成 cookies 失效。
 
 ---
 
@@ -200,9 +304,10 @@ X Monitor 的输出是：
 │   ├── state.json          # 去重状态（建议提交到 git）
 │   ├── accounts/
 │   │   └── elonmusk.json   # 一个账号一个文件
-│   └── themes/
-│       └── AI_人工智能.json  # 一个一级主题一个文件，内部含二级主题
-│   └── index.json          # 账号/主题记忆总索引
+│   ├── themes/
+│   │   └── AI_人工智能.json  # 一个一级主题一个文件，内部含二级主题
+│   ├── index.json          # 账号/主题记忆总索引
+│   └── .write.lock         # 本地并发写锁（运行时文件，不提交）
 ├── latest_run.json         # 最近一次运行的产物索引
 ├── SKILL.md                # Hermes skill 描述
 ├── reports/                # 输出目录
@@ -226,17 +331,29 @@ cd ~/.hermes/skills/x-monitor
 python3 monitor.py collect --config config.yaml
 ```
 
+常用查询命令：
+
+```bash
+python3 monitor.py latest --config config.yaml --field new_tweet_count
+python3 monitor.py latest --config config.yaml --field prompt
+python3 monitor.py latest --config config.yaml --field warning
+python3 monitor.py latest --config config.yaml --field state
+```
+
 ### 通过 Hermes 定时运行
 
 在 Hermes 对话中：
 
 ```
 每 2 小时运行 python3 ~/.hermes/skills/x-monitor/monitor.py collect --config ~/.hermes/skills/x-monitor/config.yaml。
-然后读取 latest_run.json 指向的最新 prompt 文件，用中文生成简报。
+然后读取 latest_run.json 里的 new_tweet_count、warning 和 prompt 路径。
+如果 warning 存在，直接把 warning 发到 Telegram。
+如果 new_tweet_count 为 0，就告诉我本轮没有新推文并停止。
+如果有新推文，就用 prompt 生成中文简报。
 发送到 Telegram 时不要包含 MEMORY_UPDATE 段。
-把完整总结保存到 latest_run.json 里的 summary 路径，
+完整总结末尾必须带严格 JSON 的 MEMORY_UPDATE，
+并且把完整总结保存到 latest_run.json 里的 summary 路径，
 再运行 python3 ~/.hermes/skills/x-monitor/monitor.py apply-memory --config ~/.hermes/skills/x-monitor/config.yaml --summary-file <summary_path>。
-如果 latest_run.json 里有 warning 文件，也发到 Telegram 提醒我检查 cookies 或页面状态。
 ```
 
 Hermes 会创建 cron job 自动执行。
@@ -270,24 +387,44 @@ state_file: "memory/state.json"
 # 记忆目录
 memory_dir: "memory"
 
+# 输出目录和最近一次运行索引
+output_dir: "reports"
+latest_run_file: "latest_run.json"
+
 # 一级主题别名归一化
 theme_aliases:
   "AI/人工智能":
     - "AI"
     - "人工智能"
+    - "大模型"
+    - "LLM"
+  "Space/航天":
+    - "Space"
+    - "航天"
+    - "火箭"
 
 # 二级主题别名归一化（按一级主题分别配置）
 secondary_theme_aliases:
   "AI/人工智能":
+    "Grok":
+      - "grok3"
+      - "Grok 3"
     "AI监管":
       - "AI policy"
       - "AI政策"
+      - "监管"
+  "Space/航天":
+    "Starship":
+      - "Starship Flight"
+      - "星舰"
 
 # 预定义主题方向（可选，引导 LLM 的归类方向）
 themes:
   - "AI/人工智能"
   - "加密货币/区块链"
   - "地缘政治"
+  - "科技行业"
+  - "Space/航天"
 
 # 发现模式
 discovery:
@@ -307,9 +444,31 @@ X 的登录 cookies 通常在 1-2 周后过期。过期后 Playwright 打开页�
 
 ### DOM 选择器稳定性
 
-当前的推文提取依赖 X 的 `data-testid` 属性（如 `tweetText`、`tweetPhoto`）。这些属性在过去两年中相对稳定，但 X 有可能在未来的前端重构中修改它们。
+当前的推文提取仍然依赖 X 的 DOM 结构，尤其是 `tweetText`、`tweetPhoto`、`videoPlayer` 等选择器。虽然实现已经补了 `div[lang]` 和 `a[href*="/status/"]` 的 fallback，但如果 X 做大范围前端改版，仍然可能失效。
 
 **应对方式：** 如果某天突然所有账号都抓取到 0 条推文但 cookies 没过期，大概率是选择器变了。检查 `debug_*.png` 截图确认页面状态，然后更新 `monitor.py` 中的选择器。
+
+### 本地锁与多 VPS 冲突
+
+系统现在有 `memory/.write.lock`，它能避免同一台机器上两个进程同时写记忆文件。
+
+但它解决不了下面这种情况：
+
+- VPS A 拉了仓库并运行
+- VPS B 也拉了仓库并运行
+- 两边都改了 `memory/`，然后分别 push
+
+这种冲突最终还是会体现在 Git merge 上。因此如果你要多机并行跑同一份 skill，仍然需要额外约束“谁负责写主记忆”。
+
+### 原子写与恢复边界
+
+现在关键 JSON/TXT 落盘已经使用临时文件再 `os.replace` 的方式，正常情况下比直接覆写安全很多。
+
+但原子写解决的是“单文件写坏”的问题，不解决：
+
+- 逻辑层面的错误 summary
+- 多文件之间的跨文件事务一致性
+- 多 VPS 的并行修改冲突
 
 ### 资源占用
 
@@ -336,7 +495,8 @@ Playwright 模拟真实浏览器行为，风险远低于 API scraper。但仍需
 
 ### 短期可做
 
-- **把 apply-memory 串进固定 cron workflow：** 目前脚本已支持自动解析 MEMORY_UPDATE，下一步可继续把 Hermes 定时任务模板也标准化。
+- **补正式测试文件：** 当前核心路径已经做过手工回归，但还缺少仓库内的自动化单元测试。
+- **把 apply-memory 串进固定 cron workflow：** 当前接口已经稳定，下一步可以进一步模板化 Hermes cron 提示词。
 - **Telegram 消息格式优化：** 根据 Telegram 的 Markdown 格式限制调整输出，让图片以内联预览显示。
 - **多次运行的趋势报告：** 每周生成一份周报，基于 memory/themes 里的一级/二级主题变化分析热度趋势。
 
