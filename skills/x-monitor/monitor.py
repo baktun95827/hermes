@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -33,12 +34,13 @@ DEFAULT_CONFIG = {
     "discovery": {"enabled": True, "min_interactions": 3},
     "scroll_count": 5,
     "delay_between_accounts": 5,
-    "state_file": "state.json",
+    "state_file": "memory/state.json",
     "memory_dir": "memory",
     "output_dir": "reports",
     "latest_run_file": "latest_run.json",
     "themes": [],
     "theme_aliases": {},
+    "secondary_theme_aliases": {},
 }
 
 STATUS_OK = "ok"
@@ -153,6 +155,39 @@ def load_config(path: str) -> dict[str, Any]:
     return config
 
 
+def atomic_write_text(path: Path, text: str, encoding: str = "utf-8") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(
+        f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    try:
+        temp_path.write_text(text, encoding=encoding)
+        os.replace(temp_path, path)
+    finally:
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    atomic_write_text(
+        path,
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def build_legacy_state_paths(base_dir: str, state_file: str) -> list[Path]:
+    current = Path(state_file).resolve()
+    candidates: list[Path] = []
+    legacy = resolve_path(Path(base_dir), "state.json")
+    if legacy != current:
+        candidates.append(legacy)
+    return candidates
+
+
 def read_latest_manifest(latest_run_file: Path) -> dict[str, Any] | None:
     if not latest_run_file.exists():
         return None
@@ -160,11 +195,7 @@ def read_latest_manifest(latest_run_file: Path) -> dict[str, Any] | None:
 
 
 def write_latest_manifest(latest_run_file: Path, payload: dict[str, Any]) -> None:
-    latest_run_file.parent.mkdir(parents=True, exist_ok=True)
-    latest_run_file.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    atomic_write_json(latest_run_file, payload)
 
 
 def build_artifact_paths(output_dir: Path, run_id: str) -> dict[str, Path]:
@@ -189,32 +220,42 @@ class StateManager:
       会在 MemoryStore 中迁移，然后从 state.json 清理掉
     """
 
-    def __init__(self, state_file: str):
+    def __init__(self, state_file: str, legacy_paths: list[Path] | None = None):
         self.path = Path(state_file)
+        self.legacy_paths = legacy_paths or []
+        self.loaded_from_path: Path | None = None
         self.data = self._load()
 
     def _load(self) -> dict[str, Any]:
-        if self.path.exists():
+        candidates = [self.path, *self.legacy_paths]
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
             try:
-                loaded = json.loads(self.path.read_text(encoding="utf-8"))
+                loaded = json.loads(candidate.read_text(encoding="utf-8"))
                 if isinstance(loaded, dict):
+                    self.loaded_from_path = candidate
+                    loaded.setdefault("version", 1)
+                    loaded.setdefault("updated_at", None)
+                    loaded.setdefault("seen_ids", [])
+                    loaded.setdefault("last_run", None)
                     return loaded
             except Exception:
-                pass
+                continue
         return {
+            "version": 1,
             "seen_ids": [],
             "last_run": None,
+            "updated_at": None,
         }
 
     def save(self, update_last_run: bool = True):
         if update_last_run:
             self.data["last_run"] = utc_now().isoformat()
+        self.data["version"] = 1
+        self.data["updated_at"] = utc_now().isoformat()
         self.data["seen_ids"] = self.data["seen_ids"][-2000:]
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(self.data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_json(self.path, self.data)
 
     def is_seen(self, tweet_id: str) -> bool:
         return tweet_id in self.data["seen_ids"]
@@ -241,6 +282,7 @@ class ThemeNormalizer:
         self,
         canonical_primary_themes: list[str] | None = None,
         alias_config: dict[str, Any] | None = None,
+        secondary_alias_config: dict[str, Any] | None = None,
     ):
         self.canonical_primary_themes = [
             item.strip()
@@ -248,7 +290,13 @@ class ThemeNormalizer:
             if str(item).strip()
         ]
         self.alias_config = alias_config if isinstance(alias_config, dict) else {}
+        self.secondary_alias_config = (
+            secondary_alias_config
+            if isinstance(secondary_alias_config, dict)
+            else {}
+        )
         self.primary_alias_map = self._build_primary_alias_map()
+        self.secondary_alias_map = self._build_secondary_alias_map()
 
     def _normalize_key(self, value: str) -> str:
         text = str(value).strip().lower()
@@ -289,6 +337,30 @@ class ThemeNormalizer:
                 alias_map[self._normalize_key(alias)] = canonical
         return alias_map
 
+    def _build_secondary_alias_map(self) -> dict[str, dict[str, str]]:
+        alias_map: dict[str, dict[str, str]] = {}
+        for primary_theme, secondary_aliases in self.secondary_alias_config.items():
+            canonical_primary = self.normalize_primary_theme(primary_theme)
+            if not canonical_primary or not isinstance(secondary_aliases, dict):
+                continue
+            primary_map = alias_map.setdefault(canonical_primary, {})
+            for canonical_secondary, aliases in secondary_aliases.items():
+                canonical_secondary_text = str(canonical_secondary).strip()
+                if not canonical_secondary_text:
+                    continue
+                candidates = self._candidate_aliases(canonical_secondary_text)
+                if isinstance(aliases, str):
+                    aliases = [aliases]
+                if isinstance(aliases, list):
+                    candidates.extend(
+                        str(item).strip()
+                        for item in aliases
+                        if str(item).strip()
+                    )
+                for alias in unique_preserving_order(candidates):
+                    primary_map[self._normalize_key(alias)] = canonical_secondary_text
+        return alias_map
+
     def normalize_primary_theme(self, theme: str) -> str:
         clean = str(theme).strip()
         if not clean:
@@ -303,11 +375,27 @@ class ThemeNormalizer:
         ]
         return unique_preserving_order([item for item in normalized if item])
 
-    def normalize_secondary_themes(self, themes: list[str]) -> list[str]:
+    def normalize_secondary_theme(
+        self,
+        primary_theme: str,
+        secondary_theme: str,
+    ) -> str:
+        canonical_primary = self.normalize_primary_theme(primary_theme)
+        clean = str(secondary_theme).strip()
+        if not clean:
+            return ""
+        primary_aliases = self.secondary_alias_map.get(canonical_primary, {})
+        return primary_aliases.get(self._normalize_key(clean), clean)
+
+    def normalize_secondary_themes(
+        self,
+        primary_theme: str,
+        themes: list[str],
+    ) -> list[str]:
         normalized: list[str] = []
         seen: set[str] = set()
         for item in themes:
-            clean = str(item).strip()
+            clean = self.normalize_secondary_theme(primary_theme, item)
             if not clean:
                 continue
             key = self._normalize_key(clean)
@@ -327,8 +415,8 @@ class ThemeNormalizer:
             if not canonical:
                 continue
             existing = normalized.get(canonical, [])
-            merged = existing + self.normalize_secondary_themes(subthemes)
-            normalized[canonical] = self.normalize_secondary_themes(merged)
+            merged = existing + self.normalize_secondary_themes(canonical, subthemes)
+            normalized[canonical] = self.normalize_secondary_themes(canonical, merged)
         return normalized
 
 
@@ -356,11 +444,7 @@ class MemoryStore:
         return dict(default)
 
     def _write_json(self, path: Path, payload: dict[str, Any]):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_json(path, payload)
 
     @contextmanager
     def lock(
@@ -425,6 +509,7 @@ class MemoryStore:
                 username=username,
                 note=note,
                 seen_at=utc_now().isoformat(),
+                update_id=f"legacy-account-{safe_filename(username)}",
             )
             changed = True
 
@@ -440,6 +525,10 @@ class MemoryStore:
                     primary_theme=clean,
                     secondary_themes=[],
                     seen_at=seen_at,
+                    update_id=(
+                        "legacy-theme-"
+                        f"{safe_filename(clean)}-{safe_filename(seen_at)}"
+                    ),
                 )
                 changed = True
 
@@ -454,13 +543,14 @@ class MemoryStore:
         username: str,
         note: str,
         seen_at: str,
+        update_id: str,
         primary_themes: list[str] | None = None,
         secondary_themes: dict[str, list[str]] | None = None,
-    ):
+    ) -> bool:
         username = normalize_account_name(username)
         note = note.strip()
         if not username:
-            return
+            return False
 
         normalized_primary = (
             self.normalizer.normalize_primary_themes(primary_themes or [])
@@ -484,10 +574,18 @@ class MemoryStore:
                 "note_history": [],
                 "latest_primary_themes": [],
                 "latest_secondary_themes": {},
+                "applied_update_ids": [],
+                "last_update_id": None,
             },
         )
+        applied_update_ids = payload.get("applied_update_ids", [])
+        if not isinstance(applied_update_ids, list):
+            applied_update_ids = []
+        if update_id in applied_update_ids:
+            return False
         payload["username"] = username
         payload["updated_at"] = seen_at
+        payload["last_update_id"] = update_id
         if note:
             if note != payload.get("latest_note"):
                 history = payload.get("note_history", [])
@@ -500,19 +598,25 @@ class MemoryStore:
             payload["latest_primary_themes"] = normalized_primary
         if normalized_secondary is not None:
             payload["latest_secondary_themes"] = normalized_secondary
+        payload["applied_update_ids"] = (applied_update_ids + [update_id])[-50:]
         self._write_json(path, payload)
+        return True
 
     def update_theme_memory(
         self,
         primary_theme: str,
         secondary_themes: list[str],
         seen_at: str,
-    ):
+        update_id: str,
+    ) -> bool:
         primary_theme = self.normalizer.normalize_primary_theme(primary_theme).strip()
         if not primary_theme:
-            return
+            return False
 
-        clean_secondary = self.normalizer.normalize_secondary_themes(secondary_themes)
+        clean_secondary = self.normalizer.normalize_secondary_themes(
+            primary_theme,
+            secondary_themes,
+        )
         path = self.theme_path(primary_theme)
         payload = self._read_json(
             path,
@@ -524,10 +628,18 @@ class MemoryStore:
                 "latest_secondary_themes": [],
                 "recent_runs": [],
                 "secondary_themes": {},
+                "applied_update_ids": [],
+                "last_update_id": None,
             },
         )
+        applied_update_ids = payload.get("applied_update_ids", [])
+        if not isinstance(applied_update_ids, list):
+            applied_update_ids = []
+        if update_id in applied_update_ids:
+            return False
         payload["primary_theme"] = primary_theme
         payload["updated_at"] = seen_at
+        payload["last_update_id"] = update_id
         payload["run_count"] = int(payload.get("run_count", 0)) + 1
         payload["latest_secondary_themes"] = clean_secondary
 
@@ -541,6 +653,7 @@ class MemoryStore:
             }
         )
         payload["recent_runs"] = recent_runs[-20:]
+        payload["applied_update_ids"] = (applied_update_ids + [update_id])[-50:]
 
         secondary_index = payload.get("secondary_themes", {})
         if not isinstance(secondary_index, dict):
@@ -555,8 +668,9 @@ class MemoryStore:
                 "first_seen": existing.get("first_seen") or seen_at,
                 "last_seen": seen_at,
             }
-            payload["secondary_themes"] = secondary_index
+        payload["secondary_themes"] = secondary_index
         self._write_json(path, payload)
+        return True
 
     def get_account_notes(self) -> dict[str, str]:
         notes: dict[str, str] = {}
@@ -631,7 +745,7 @@ class MemoryStore:
             }
 
         index_payload = {
-            "version": 1,
+            "version": 2,
             "updated_at": utc_now().isoformat(),
             "account_count": len(accounts),
             "theme_count": len(themes),
@@ -866,37 +980,76 @@ class PlaywrightFetcher:
 
         return bool(await page.query_selector("input[name='text']"))
 
+    def _match_status_href(self, href: str | None) -> tuple[str, str] | None:
+        if not href:
+            return None
+        match = re.search(r"/([^/]+)/status/(\d+)", str(href))
+        if not match:
+            return None
+        return match.group(1), match.group(2)
+
+    async def _extract_status_metadata(
+        self,
+        el,
+        source_account: str,
+    ) -> tuple[str, str | None, str | None, str | None]:
+        author = source_account
+        tweet_id = None
+        created_at = None
+        tweet_url = None
+
+        time_el = await el.query_selector("time")
+        if time_el:
+            created_at = await time_el.get_attribute("datetime")
+            href = await time_el.evaluate(
+                "node => node.closest('a')?.getAttribute('href')"
+            )
+            match = self._match_status_href(href)
+            if match:
+                author, tweet_id = match
+                tweet_url = f"https://x.com/{author}/status/{tweet_id}"
+
+        if tweet_id:
+            return author, tweet_id, created_at, tweet_url
+
+        link_elements = await el.query_selector_all('a[href*="/status/"]')
+        for link_el in link_elements:
+            href = await link_el.get_attribute("href")
+            match = self._match_status_href(href)
+            if not match:
+                continue
+            author, tweet_id = match
+            tweet_url = f"https://x.com/{author}/status/{tweet_id}"
+            break
+
+        return author, tweet_id, created_at, tweet_url
+
+    async def _extract_text_content(self, el) -> tuple[str, str]:
+        text_candidates: list[str] = []
+        quoted_text = ""
+
+        text_nodes = await el.query_selector_all('[data-testid="tweetText"]')
+        for node in text_nodes:
+            value = re.sub(r"\s+", " ", (await node.inner_text() or "")).strip()
+            if value and value not in text_candidates:
+                text_candidates.append(value)
+
+        if not text_candidates:
+            lang_nodes = await el.query_selector_all("div[lang]")
+            for node in lang_nodes[:6]:
+                value = re.sub(r"\s+", " ", (await node.inner_text() or "")).strip()
+                if value and value not in text_candidates:
+                    text_candidates.append(value)
+
+        if len(text_candidates) > 1:
+            quoted_text = text_candidates[-1]
+
+        return (text_candidates[0] if text_candidates else ""), quoted_text
+
     async def _parse_tweet(
         self, el, source_account: str
     ) -> dict[str, Any] | None:
         try:
-            text_nodes = await el.query_selector_all('[data-testid="tweetText"]')
-            if not text_nodes:
-                return None
-
-            text = await text_nodes[0].inner_text()
-            quoted_text = ""
-            if len(text_nodes) > 1:
-                quoted_text = await text_nodes[-1].inner_text()
-
-            author = source_account
-            tweet_id = None
-            created_at = None
-            tweet_url = None
-
-            time_el = await el.query_selector("time")
-            if time_el:
-                created_at = await time_el.get_attribute("datetime")
-                href = await time_el.evaluate(
-                    "node => node.closest('a')?.getAttribute('href')"
-                )
-                if href:
-                    match = re.search(r"/([^/]+)/status/(\d+)", str(href))
-                    if match:
-                        author = match.group(1)
-                        tweet_id = match.group(2)
-                        tweet_url = f"https://x.com/{author}/status/{tweet_id}"
-
             images: list[str] = []
             img_elements = await el.query_selector_all(
                 '[data-testid="tweetPhoto"] img'
@@ -910,6 +1063,22 @@ class PlaywrightFetcher:
 
             has_video = bool(
                 await el.query_selector('[data-testid="videoPlayer"]')
+            )
+            text, quoted_text = await self._extract_text_content(el)
+            if not text and (images or has_video):
+                media_parts: list[str] = []
+                if images:
+                    media_parts.append(f"{len(images)}张图片")
+                if has_video:
+                    media_parts.append("视频")
+                text = f"[媒体推文：{', '.join(media_parts)}]"
+
+            if not text:
+                return None
+
+            author, tweet_id, created_at, tweet_url = await self._extract_status_metadata(
+                el,
+                source_account,
             )
             stats = await self._parse_stats(el)
             is_retweet = text.startswith("RT @") or bool(
@@ -943,7 +1112,8 @@ class PlaywrightFetcher:
                 if not btn:
                     continue
                 aria = await btn.get_attribute("aria-label") or ""
-                parsed = parse_metric_value(aria)
+                text = await btn.text_content() or ""
+                parsed = parse_metric_value(aria) or parse_metric_value(text)
                 if parsed is not None:
                     stats[key] = parsed
             except Exception:
@@ -1164,13 +1334,19 @@ def build_llm_prompt(
 
 ## MEMORY_UPDATE 格式
 ### MEMORY_UPDATE
-PRIMARY_THEMES: [一级主题列表，用逗号分隔；偏稳定，如 AI/人工智能、Space/航天]
-SECONDARY_THEMES:
-一级主题1: [该一级主题下的二级主题列表，用逗号分隔；偏具体，如 Grok、Starship、监管]
-一级主题2: [二级主题列表]
-ACCOUNT_NOTES:
-@账号1: [一句话更新该账号的内容画像]
-@账号2: [一句话更新该账号的内容画像]
+```json
+{
+  "primary_themes": ["AI/人工智能", "Space/航天"],
+  "secondary_themes": {
+    "AI/人工智能": ["Grok", "AI监管"],
+    "Space/航天": ["Starship"]
+  },
+  "account_notes": {
+    "elonmusk": "持续围绕火箭、AI 产品和政策发言。",
+    "sama": "主要讨论 OpenAI 产品、模型能力和行业竞争。"
+  }
+}
+```
 
 ## 规则
 1. 同一一级主题下合并不同账号的相关推文
@@ -1181,7 +1357,8 @@ ACCOUNT_NOTES:
 6. `监控源` 与 `作者` 不同时，说明这是转推/转发线索
 7. 尽量复用已有一级主题；只有真的出现新方向时再创建新的一级主题
 8. 二级主题应该放在所属一级主题下面，不要把事件级名称直接当一级主题
-9. `### MEMORY_UPDATE` 必须输出
+9. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，外层 key 只能是 `primary_themes`、`secondary_themes`、`account_notes`
+10. JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
 {theme_hint}
 ## 历史上下文
 {history_context if history_context else "（首次运行，无历史数据）"}
@@ -1229,7 +1406,83 @@ def build_collection_warning(results: list[FetchResult]) -> str | None:
     )
 
 
-def parse_memory_update(summary_text: str) -> dict[str, Any]:
+def empty_memory_update() -> dict[str, Any]:
+    return {
+        "primary_themes": [],
+        "secondary_themes": {},
+        "account_notes": {},
+    }
+
+
+def coerce_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return unique_preserving_order(
+        [str(item).strip() for item in value if str(item).strip()]
+    )
+
+
+def coerce_secondary_mapping(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, list[str]] = {}
+    for key, items in value.items():
+        primary_theme = str(key).strip()
+        if not primary_theme:
+            continue
+        normalized[primary_theme] = coerce_string_list(items)
+    return normalized
+
+
+def coerce_account_notes(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, str] = {}
+    for key, note in value.items():
+        username = normalize_account_name(str(key))
+        note_text = str(note).strip()
+        if username and note_text:
+            normalized[username] = note_text
+    return normalized
+
+
+def extract_memory_update_object(summary_text: str) -> dict[str, Any] | None:
+    lines = summary_text.splitlines()
+    start_index: int | None = None
+
+    for index, line in enumerate(lines):
+        if re.match(r"^\s*#{0,6}\s*MEMORY_UPDATE\s*$", line, re.IGNORECASE):
+            start_index = index + 1
+            break
+        if re.match(r"^\s*MEMORY_UPDATE\s*$", line, re.IGNORECASE):
+            start_index = index + 1
+            break
+
+    if start_index is None:
+        return None
+
+    block_text = "\n".join(lines[start_index:]).strip()
+    if not block_text:
+        return None
+
+    fenced_match = re.search(
+        r"```(?:json)?\s*(.*?)```",
+        block_text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    candidate = fenced_match.group(1).strip() if fenced_match else block_text
+    json_start = candidate.find("{")
+    if json_start < 0:
+        return None
+
+    decoder = json.JSONDecoder()
+    parsed, _ = decoder.raw_decode(candidate[json_start:])
+    if isinstance(parsed, dict):
+        return parsed
+    return None
+
+
+def parse_legacy_memory_update(summary_text: str) -> dict[str, Any]:
     lines = summary_text.splitlines()
     start_index = 0
 
@@ -1329,6 +1582,49 @@ def parse_memory_update(summary_text: str) -> dict[str, Any]:
     }
 
 
+def parse_memory_update(summary_text: str) -> dict[str, Any]:
+    try:
+        payload = extract_memory_update_object(summary_text)
+    except json.JSONDecodeError:
+        payload = None
+
+    if isinstance(payload, dict):
+        parsed = empty_memory_update()
+        parsed["primary_themes"] = coerce_string_list(payload.get("primary_themes"))
+        parsed["secondary_themes"] = coerce_secondary_mapping(
+            payload.get("secondary_themes")
+        )
+        parsed["account_notes"] = coerce_account_notes(payload.get("account_notes"))
+        if (
+            parsed["primary_themes"]
+            or parsed["secondary_themes"]
+            or parsed["account_notes"]
+        ):
+            return parsed
+
+    return parse_legacy_memory_update(summary_text)
+
+
+def build_memory_update_id(
+    summary_text: str,
+    summary_path: Path,
+    run_id: str | None = None,
+) -> str:
+    identity = {
+        "summary_sha256": hashlib.sha256(
+            summary_text.encode("utf-8")
+        ).hexdigest(),
+    }
+    if run_id:
+        identity["run_id"] = run_id
+    else:
+        identity["summary_path"] = str(summary_path)
+    digest = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"mu_{digest[:20]}"
+
+
 async def collect(config_path: str) -> int:
     try:
         from playwright.async_api import async_playwright
@@ -1345,10 +1641,17 @@ async def collect(config_path: str) -> int:
         print("❌ 请在 config.yaml 中配置要监控的账号")
         return 1
 
-    state = StateManager(config["state_file"])
+    state = StateManager(
+        config["state_file"],
+        legacy_paths=build_legacy_state_paths(
+            config["base_dir"],
+            config["state_file"],
+        ),
+    )
     normalizer = ThemeNormalizer(
         canonical_primary_themes=config.get("themes", []),
         alias_config=config.get("theme_aliases", {}),
+        secondary_alias_config=config.get("secondary_theme_aliases", {}),
     )
     memory_store = MemoryStore(config["memory_dir"], normalizer=normalizer)
     with memory_store.lock():
@@ -1433,18 +1736,14 @@ async def collect(config_path: str) -> int:
         "keywords": keywords,
         "warning": warning,
     }
-    artifact_paths["data"].write_text(
-        json.dumps(data_payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-
-    artifact_paths["prompt"].write_text(prompt, encoding="utf-8")
+    atomic_write_json(artifact_paths["data"], data_payload)
+    atomic_write_text(artifact_paths["prompt"], prompt, encoding="utf-8")
     full_report = f"📊 X 监控报告 — {now_str}\n\n{raw_report}\n{discovery_section}"
-    artifact_paths["report"].write_text(full_report, encoding="utf-8")
+    atomic_write_text(artifact_paths["report"], full_report, encoding="utf-8")
 
     warning_path: str | None = None
     if warning:
-        artifact_paths["warning"].write_text(warning, encoding="utf-8")
+        atomic_write_text(artifact_paths["warning"], warning, encoding="utf-8")
         warning_path = str(artifact_paths["warning"])
 
     state.save(update_last_run=False)
@@ -1460,6 +1759,7 @@ async def collect(config_path: str) -> int:
             "summary": str(artifact_paths["summary"]),
             "memory_update": str(artifact_paths["memory_update"]),
             "memory_index": str(memory_store.index_path),
+            "state": config["state_file"],
             "warning": warning_path,
             "memory_dir": config["memory_dir"],
         },
@@ -1526,6 +1826,10 @@ def latest(config_path: str, field: str | None) -> int:
         print(payload.get("paths", {}).get("memory_index") or "")
         return 0
 
+    if field == "state":
+        print(payload.get("paths", {}).get("state") or "")
+        return 0
+
     if field in {"data", "prompt", "report", "summary", "memory_update", "warning"}:
         value = payload.get("paths", {}).get(field) or ""
         print(value)
@@ -1553,43 +1857,6 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         print("未在 summary 中找到可解析的 MEMORY_UPDATE")
         return 1
 
-    state = StateManager(config["state_file"])
-    normalizer = ThemeNormalizer(
-        canonical_primary_themes=config.get("themes", []),
-        alias_config=config.get("theme_aliases", {}),
-    )
-    memory_store = MemoryStore(config["memory_dir"], normalizer=normalizer)
-    seen_at = utc_now().isoformat()
-    with memory_store.lock():
-        memory_store.migrate_legacy_state(state)
-
-        normalized_secondary_mapping = memory_store.normalizer.normalize_secondary_mapping(
-            parsed["secondary_themes"]
-        )
-        normalized_primary = memory_store.normalizer.normalize_primary_themes(
-            parsed["primary_themes"] + list(normalized_secondary_mapping.keys())
-        )
-
-        for primary_theme in normalized_primary:
-            memory_store.update_theme_memory(
-                primary_theme=primary_theme,
-                secondary_themes=normalized_secondary_mapping.get(primary_theme, []),
-                seen_at=seen_at,
-            )
-
-        for username, note in parsed["account_notes"].items():
-            memory_store.update_account_note(
-                username=username,
-                note=note,
-                seen_at=seen_at,
-                primary_themes=normalized_primary,
-                secondary_themes=normalized_secondary_mapping,
-            )
-
-        memory_store.rebuild_index()
-
-    state.save(update_last_run=False)
-
     latest_run_file = Path(config["latest_run_file"])
     latest_payload = read_latest_manifest(latest_run_file) or {}
     output_dir = Path(config["output_dir"])
@@ -1601,10 +1868,83 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         if latest_payload.get("paths", {}).get("summary")
         else None
     )
-    if preferred_summary_path and preferred_summary_path.resolve() != summary_path.resolve():
-        preferred_summary_path.parent.mkdir(parents=True, exist_ok=True)
-        preferred_summary_path.write_text(summary_text, encoding="utf-8")
-        stored_summary_path = preferred_summary_path
+    if preferred_summary_path:
+        should_use_preferred_path = (
+            preferred_summary_path.resolve() == summary_path.resolve()
+            or not preferred_summary_path.exists()
+            or (
+                latest_payload.get("run_id")
+                and preferred_summary_path.name.startswith(
+                    f"summary_{latest_payload['run_id']}"
+                )
+            )
+        )
+        if should_use_preferred_path and preferred_summary_path.resolve() != summary_path.resolve():
+            atomic_write_text(preferred_summary_path, summary_text, encoding="utf-8")
+            stored_summary_path = preferred_summary_path
+        elif preferred_summary_path.resolve() == summary_path.resolve():
+            stored_summary_path = preferred_summary_path
+
+    update_id = build_memory_update_id(
+        summary_text=summary_text,
+        summary_path=stored_summary_path.resolve(),
+        run_id=(
+            str(latest_payload.get("run_id"))
+            if latest_payload.get("run_id")
+            else None
+        ),
+    )
+
+    state = StateManager(
+        config["state_file"],
+        legacy_paths=build_legacy_state_paths(
+            config["base_dir"],
+            config["state_file"],
+        ),
+    )
+    normalizer = ThemeNormalizer(
+        canonical_primary_themes=config.get("themes", []),
+        alias_config=config.get("theme_aliases", {}),
+        secondary_alias_config=config.get("secondary_theme_aliases", {}),
+    )
+    memory_store = MemoryStore(config["memory_dir"], normalizer=normalizer)
+    seen_at = utc_now().isoformat()
+    theme_updates = 0
+    account_updates = 0
+    with memory_store.lock():
+        memory_store.migrate_legacy_state(state)
+
+        normalized_secondary_mapping = memory_store.normalizer.normalize_secondary_mapping(
+            parsed["secondary_themes"]
+        )
+        normalized_primary = memory_store.normalizer.normalize_primary_themes(
+            parsed["primary_themes"] + list(normalized_secondary_mapping.keys())
+        )
+
+        for primary_theme in normalized_primary:
+            if memory_store.update_theme_memory(
+                primary_theme=primary_theme,
+                secondary_themes=normalized_secondary_mapping.get(primary_theme, []),
+                seen_at=seen_at,
+                update_id=update_id,
+            ):
+                theme_updates += 1
+
+        for username, note in parsed["account_notes"].items():
+            if memory_store.update_account_note(
+                username=username,
+                note=note,
+                seen_at=seen_at,
+                update_id=update_id,
+                primary_themes=normalized_primary,
+                secondary_themes=normalized_secondary_mapping,
+            ):
+                account_updates += 1
+
+        if theme_updates or account_updates or not memory_store.index_path.exists():
+            memory_store.rebuild_index()
+
+    state.save(update_last_run=False)
 
     memory_update_path = (
         Path(latest_payload.get("paths", {}).get("memory_update"))
@@ -1614,23 +1954,26 @@ def apply_memory(config_path: str, summary_file: str) -> int:
     memory_update_path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = {
+        "update_id": update_id,
         "applied_at": seen_at,
         "summary_file": str(stored_summary_path),
+        "state_file": config["state_file"],
         "primary_themes": normalized_primary,
         "secondary_themes": normalized_secondary_mapping,
         "account_notes": parsed["account_notes"],
         "memory_dir": config["memory_dir"],
         "memory_index": str(memory_store.index_path),
+        "theme_updates": theme_updates,
+        "account_updates": account_updates,
+        "already_applied": theme_updates == 0 and account_updates == 0,
     }
-    memory_update_path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    atomic_write_json(memory_update_path, payload)
 
     latest_payload.setdefault("paths", {})
     latest_payload["paths"]["summary"] = str(stored_summary_path)
     latest_payload["paths"]["memory_update"] = str(memory_update_path)
     latest_payload["paths"]["memory_index"] = str(memory_store.index_path)
+    latest_payload["paths"]["state"] = config["state_file"]
     latest_payload["memory_update_applied"] = True
     latest_payload["memory_update"] = payload
     if "summary" not in latest_payload:
@@ -1667,6 +2010,7 @@ def build_parser() -> argparse.ArgumentParser:
             "memory_update",
             "memory_dir",
             "memory_index",
+            "state",
             "warning",
             "new_tweet_count",
         ],

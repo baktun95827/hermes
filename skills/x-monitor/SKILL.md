@@ -21,7 +21,8 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 ## Files
 
 - `monitor.py`: collects tweets, exposes the latest artifact manifest, and applies `MEMORY_UPDATE`
-- `config.yaml`: monitored accounts, memory/output paths, and topic hints
+- `config.yaml`: monitored accounts, synced state path, topic hints, and alias normalization
+- `memory/state.json`: synced dedupe state (`seen_ids`, `last_run`)
 - `memory/index.json`: synced index of all account/theme memory files
 - `claude.md`: deeper architecture notes; read it only when patching selectors or data flow
 
@@ -76,9 +77,26 @@ Generate a Chinese brief from that prompt with this output discipline:
 
 - Produce a Telegram-ready brief first
 - Append `### MEMORY_UPDATE` at the end of the full saved summary
-- Use `PRIMARY_THEMES` for stable一级主题
-- Use `SECONDARY_THEMES` to map each一级主题 to more specific二级主题
+- `### MEMORY_UPDATE` must be a strict JSON object, ideally inside a `json` fenced block
+- Use `primary_themes` for stable一级主题
+- Use `secondary_themes` to map each一级主题 to more specific二级主题
+- Use `account_notes` with usernames as keys and no leading `@`
 - Send only the content before `### MEMORY_UPDATE` to Telegram
+
+Expected `MEMORY_UPDATE` shape:
+
+```json
+{
+  "primary_themes": ["AI/人工智能", "Space/航天"],
+  "secondary_themes": {
+    "AI/人工智能": ["Grok", "AI监管"],
+    "Space/航天": ["Starship"]
+  },
+  "account_notes": {
+    "elonmusk": "持续围绕火箭、AI 产品和政策发言。"
+  }
+}
+```
 
 After generating the summary, save the full text to the summary path returned by:
 
@@ -94,12 +112,18 @@ python3 ~/.hermes/skills/x-monitor/monitor.py apply-memory --config ~/.hermes/sk
 
 `apply-memory` parses the `MEMORY_UPDATE` block and writes:
 
-- updated `state.json` for去重/last_run
+- updated `memory/state.json` for去重/last_run
 - updated `memory/index.json`
 - `memory/accounts/<username>.json`
 - `memory/themes/<primary-theme>.json`
 - a structured `memory_update_*.json`
 - refreshed `latest_run.json`
+
+Behavior notes:
+
+- `apply-memory` is idempotent for the same summary input; rerunning it does not inflate theme counts
+- 一级主题和二级主题都会先经过 alias 归一化再写入 memory
+- `latest --field state` returns the synced state file path
 
 ## Scheduled Use
 
@@ -115,7 +139,7 @@ Prefer using the `latest` subcommand instead of guessing filenames or shell-glob
 ## Guardrails
 
 - Always use absolute paths when Hermes is running from cron or the gateway
-- Commit `memory/` when you want memory to move with the repo across VPS hosts
-- Never commit `cookies.json`, `state.json`, `latest_run.json`, `reports/`, or debug screenshots
+- Commit `memory/` when you want memory and dedupe state to move with the repo across VPS hosts
+- Never commit `cookies.json`, legacy root `state.json`, `latest_run.json`, `reports/`, or debug screenshots
 - If every account lands on a login wall, ask the user to refresh cookies before retrying
 - If pages load but visible tweet count is zero for all accounts, inspect `debug_*.png` and `claude.md` before changing selectors

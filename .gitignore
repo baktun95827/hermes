@@ -22,6 +22,7 @@ state.db-wal
 skills/x-monitor/cookies.json
 skills/x-monitor/1.py
 skills/x-monitor/debug_kaboruo.png
+# legacy root state file; synced state now lives at skills/x-monitor/memory/state.json
 skills/x-monitor/state.json
 skills/x-monitor/memory/.write.lock
 skills/x-monitor/latest_run.json

@@ -18,8 +18,8 @@ delay_between_accounts: 5
 auth:
   cookies_file: "cookies.json"
 
-# 去重状态文件（自动维护，不需要手动编辑）
-state_file: "state.json"
+# 去重状态文件（自动维护；建议随 memory/ 一起提交，便于换 VPS 后继续去重）
+state_file: "memory/state.json"
 
 # 记忆目录：账号一文件，一级主题一文件
 memory_dir: "memory"
@@ -50,6 +50,21 @@ theme_aliases:
     - "Space"
     - "航天"
     - "火箭"
+
+# 二级主题别名归一化：按一级主题分别配置，避免 AI/监管 和 地缘/监管 混到一起
+secondary_theme_aliases:
+  "AI/人工智能":
+    "Grok":
+      - "grok3"
+      - "Grok 3"
+    "AI监管":
+      - "AI policy"
+      - "AI政策"
+      - "监管"
+  "Space/航天":
+    "Starship":
+      - "Starship Flight"
+      - "星舰"
 
 # 发现模式
 discovery:

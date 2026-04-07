@@ -27,8 +27,8 @@ X Monitor 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统�
 │                       │         │ memory_update...│  │
 │                       ▼         └───────┬────────┘  │
 │                 ┌───────────┐           │           │
-│                 │ state.json│           ▼           │
-│                 │ 去重状态   │     ┌──────────┐     │
+│                 │memory/state│           ▼           │
+│                 │  去重状态   │     ┌──────────┐     │
 │                 └───────────┘     │  Hermes   │     │
 │                 ┌───────────┐     │  LLM 总结  │     │
 │                 │ memory/   │◀────┴─────┬────┘     │
@@ -103,16 +103,20 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 
 ### 2. 去重机制
 
-系统维护一个 `state.json` 文件，记录所有已处理过的推文 ID：
+系统维护一个 `memory/state.json` 文件，记录所有已处理过的推文 ID：
 
 ```json
 {
+  "version": 1,
   "seen_ids": ["1234567890", "1234567891", ...],
-  "last_run": "2026-04-06T07:22:00+00:00"
+  "last_run": "2026-04-06T07:22:00+00:00",
+  "updated_at": "2026-04-06T07:22:03+00:00"
 }
 ```
 
 每次抓取时，已存在于 `seen_ids` 中的推文会被跳过。列表自动截断到最近 2000 条，防止文件无限膨胀。
+
+这样做的意义是：去重状态可以随 GitHub 一起同步。换 VPS 后，系统不会把历史推文重新当成“新推文”。
 
 这意味着：如果你每 2 小时跑一次，每次报告只包含**上次运行后的新推文**。不会重复推送你已经看过的内容。
 
@@ -143,7 +147,7 @@ X Monitor 的输出是：
 
 去重状态与分析记忆已经拆开：
 
-**运行状态（state.json）：** 只记录 `seen_ids` 和 `last_run`，避免把长期记忆和运行状态混在一起。
+**运行状态（memory/state.json）：** 只记录 `seen_ids`、`last_run` 和 `updated_at`，并随仓库同步。
 
 **账号记忆（memory/accounts/*.json）：** 每个账号一个文件，保存最新画像和简短历史。
 
@@ -151,18 +155,27 @@ X Monitor 的输出是：
 
 **索引（memory/index.json）：** 汇总所有账号记忆和主题记忆文件，方便跨 VPS 同步后快速恢复和遍历。
 
-每次 LLM 总结后，输出一段 `MEMORY_UPDATE`，其中包含对每个账号的一句话画像更新，以及一级/二级主题结构。例如：
+每次 LLM 总结后，输出一段严格 JSON 的 `MEMORY_UPDATE`，其中包含对每个账号的一句话画像更新，以及一级/二级主题结构。例如：
 
-```
-PRIMARY_THEMES: AI/人工智能, Space/航天
-SECONDARY_THEMES:
-AI/人工智能: Grok, AI监管
-Space/航天: Starship
-ACCOUNT_NOTES:
-@elonmusk: 近期主要讨论政府效率（DOGE）、AI（Grok）、航天（Starship），偶尔发 meme
+```json
+{
+  "primary_themes": ["AI/人工智能", "Space/航天"],
+  "secondary_themes": {
+    "AI/人工智能": ["Grok", "AI监管"],
+    "Space/航天": ["Starship"]
+  },
+  "account_notes": {
+    "elonmusk": "近期主要讨论政府效率（DOGE）、AI（Grok）、航天（Starship），偶尔发 meme"
+  }
+}
 ```
 
-这些记忆会持久化，下次运行时 LLM 能看到历史上下文，从而产出更有深度的分析（"与上周相比，该账号从 AI 话题转向了政策讨论"）。
+落盘前会先做两层归一化：
+
+- 一级主题别名归一化，例如 `AI`、`人工智能` → `AI/人工智能`
+- 二级主题按所属一级主题归一化，例如 `AI policy`、`AI政策` → `AI监管`
+
+并且 `apply-memory` 对同一份 summary 是幂等的：重复执行不会把主题出现次数重复累计。
 
 ### 5. 账号发现
 
@@ -183,8 +196,8 @@ ACCOUNT_NOTES:
 ├── monitor.py              # 主脚本
 ├── config.yaml             # 配置文件
 ├── cookies.json            # X 登录 cookies（敏感，不要提交到 git）
-├── state.json              # 持久化状态（去重 + last_run）
 ├── memory/                 # 长期记忆目录
+│   ├── state.json          # 去重状态（建议提交到 git）
 │   ├── accounts/
 │   │   └── elonmusk.json   # 一个账号一个文件
 │   └── themes/
@@ -251,8 +264,8 @@ delay_between_accounts: 5
 auth:
   cookies_file: "cookies.json"
 
-# 去重状态文件
-state_file: "state.json"
+# 去重状态文件（建议提交到 git）
+state_file: "memory/state.json"
 
 # 记忆目录
 memory_dir: "memory"
@@ -262,6 +275,13 @@ theme_aliases:
   "AI/人工智能":
     - "AI"
     - "人工智能"
+
+# 二级主题别名归一化（按一级主题分别配置）
+secondary_theme_aliases:
+  "AI/人工智能":
+    "AI监管":
+      - "AI policy"
+      - "AI政策"
 
 # 预定义主题方向（可选，引导 LLM 的归类方向）
 themes:
