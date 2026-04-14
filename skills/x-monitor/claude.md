@@ -4,6 +4,14 @@
 
 X Monitor 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统。它定期抓取指定账号的推文，通过 LLM 按主题归类生成中文简报，并发送到 Telegram。系统具备去重、记忆、账号发现等能力，设计目标是成为一个**长期运行、越用越聪明**的信息助手。
 
+## 文档分工
+
+- `SKILL.md`：运行入口和标准操作流程
+- `references/architecture.md`：collector / local store / analyzer / digest 四层边界与契约
+- `claude.md`：当前实现细节、文件结构、调试方式、限制和演进方向
+
+如果你要判断“某段逻辑该放哪一层”，先读 `references/architecture.md`。如果你要改选择器、状态结构或落盘行为，再看这份 `claude.md`。
+
 ### 核心理念
 
 传统的推文监控工具是"按账号罗列"——你关注了谁，就看谁的推文。X Monitor 的思路不同：它把所有监控账号的推文打散，**按主题重新组织**。你关注的不是"Elon Musk 说了什么"，而是"AI 领域今天发生了什么，哪些人在讨论"。
@@ -12,38 +20,44 @@ X Monitor 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统�
 
 ---
 
-## 系统架构
+## 四层架构
 
+```text
+collector -> local store -> analyzer -> digest / alerts
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Hermes Agent                      │
-│                                                      │
-│  ┌──────────┐   ┌───────────┐   ┌────────────────┐  │
-│  │  Cron    │──▶│ monitor.py│──▶│ reports/       │  │
-│  │ 定时触发  │   │  主脚本    │   │ prompt_xxx.txt │  │
-│  └──────────┘   └─────┬─────┘   │ data_xxx.json  │  │
-│                       │         │ report_xxx.txt  │  │
-│                       │         │ summary_xxx.txt │  │
-│                       │         │ memory_update...│  │
-│                       ▼         └───────┬────────┘  │
-│                 ┌────────────────┐      │           │
-│                 │memory/state.json│      ▼           │
-│                 │  去重状态/同步   │  ┌──────────┐   │
-│                 └───────────┘     │  Hermes   │     │
-│                 ┌───────────┐     │  LLM 总结  │     │
-│                 │ memory/   │◀────┴─────┬────┘     │
-│                 │ 账号/主题记忆│           │          │
-│                 └───────────┘           ▼           │
-│                                   ┌──────────┐     │
-│                                   │ Telegram  │     │
-│                                   │ Gateway   │     │
-│                                   └──────────┘     │
-└─────────────────────────────────────────────────────┘
 
-外部依赖:
-  - Playwright + Chromium（无头浏览器）
-  - X.com（通过浏览器 cookies 认证）
-```
+当前代码映射关系：
+
+- `collector`
+  - `monitor.py collect`
+  - 负责 Playwright、cookies、滚动、DOM 提取、warning 判断、原始产物生成
+- `local store`
+  - `reports/`
+  - `latest_run.json`
+  - `memory/state.json`
+  - `memory/accounts/*.json`
+  - `memory/themes/*.json`
+  - `memory/index.json`
+- `analyzer`
+  - Hermes / LLM 读取 `prompt_*.txt`
+  - 结合 `memory/` 生成中文摘要和严格 JSON `MEMORY_UPDATE`
+- `digest / alerts`
+  - Telegram 或其他下游通知逻辑
+  - 根据 `warning`、`new_tweet_count` 和 summary 决定发送什么
+
+外部依赖：
+
+- Playwright + Chromium（无头浏览器）
+- X.com（通过浏览器 cookies 认证）
+
+这四层故意分开，原因不是抽象，而是失败模式不同：
+
+- collector 失败，通常是 cookies、选择器、页面加载、风控
+- local store 失败，通常是路径、JSON、Git 同步、状态漂移
+- analyzer 失败，通常是主题判断、记忆质量、输出格式
+- digest / alerts 失败，通常是错误地发送、漏发、误发
+
+因此当前实现不建议用“一个大 agent 从打开 X 一路干到发 Telegram”为主路径。更稳的方式是：collector 只负责拿材料，analyzer 只负责判断价值，digest / alerts 只负责对外输出。
 
 ---
 
@@ -300,6 +314,8 @@ X Monitor 的核心不是“按账号罗列推文”，而是“按主题重组�
 ├── monitor.py              # 主脚本
 ├── config.yaml             # 配置文件
 ├── cookies.json            # X 登录 cookies（敏感，不要提交到 git）
+├── references/
+│   └── architecture.md     # 四层边界、契约和职责分工
 ├── memory/                 # 长期记忆目录
 │   ├── state.json          # 去重状态（建议提交到 git）
 │   ├── accounts/
@@ -309,7 +325,7 @@ X Monitor 的核心不是“按账号罗列推文”，而是“按主题重组�
 │   ├── index.json          # 账号/主题记忆总索引
 │   └── .write.lock         # 本地并发写锁（运行时文件，不提交）
 ├── latest_run.json         # 最近一次运行的产物索引
-├── SKILL.md                # Hermes skill 描述
+├── SKILL.md                # Hermes skill 运行说明
 ├── reports/                # 输出目录
 │   ├── data_YYYYMMDD_HHMMSS.json     # 原始数据（JSON）
 │   ├── prompt_YYYYMMDD_HHMMSS.txt    # LLM prompt

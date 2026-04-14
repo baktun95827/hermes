@@ -24,7 +24,24 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 - `config.yaml`: monitored accounts, synced state path, topic hints, and alias normalization
 - `memory/state.json`: synced dedupe state (`seen_ids`, `last_run`)
 - `memory/index.json`: synced index of all account/theme memory files
-- `claude.md`: deeper architecture notes; read it only when patching selectors or data flow
+- `references/architecture.md`: stable layer boundaries and contracts; read it before moving logic between collector, store, analyzer, and digest
+- `claude.md`: implementation notes and debugging detail; read it when patching selectors, manifests, or memory schemas
+
+## Layered Design
+
+Treat `x-monitor` as four layers:
+
+1. `collector`: `monitor.py collect` opens X with Playwright and writes raw artifacts
+2. `local store`: `reports/`, `latest_run.json`, and `memory/` persist raw outputs and synced memory
+3. `analyzer`: the LLM reads the prompt and memory, writes the digest, and emits strict JSON `MEMORY_UPDATE`
+4. `digest / alerts`: Hermes or another downstream workflow decides whether to alert, send a digest, or no-op
+
+Boundary rules:
+
+- the collector may use a browser, but it must not make final editorial judgments
+- the analyzer must not open webpages or mutate memory files directly
+- the digest should read `latest` output and summary files, not scrape directories or guess paths
+- `apply-memory` is the only bridge that writes analyzer output back into `memory/`
 
 ## Setup
 
@@ -135,6 +152,8 @@ For Hermes cron, keep the flow deterministic:
 4. If there are new tweets, read the prompt, generate the summary, send only the user-facing section, save the full summary, then run `apply-memory`
 
 Prefer using the `latest` subcommand instead of guessing filenames or shell-globbing inside `reports/`.
+
+If you need the full rationale for these boundaries, read `references/architecture.md` before changing the workflow shape.
 
 ## Guardrails
 
