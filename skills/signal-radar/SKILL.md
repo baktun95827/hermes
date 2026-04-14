@@ -8,6 +8,10 @@ metadata:
 
 # Signal Radar
 
+This file is the deployment and runtime contract for Hermes operators. It assumes the skill is installed under `~/.hermes/skills/signal-radar/` on a VPS or another Hermes host.
+
+If you are patching this skill inside the repo, start with `references/local-codex-intro.md` first. That document is the repo-local development entrypoint and uses local paths such as `skills/signal-radar/...`.
+
 Use this skill when the user wants Hermes to:
 
 - Monitor one or more X accounts over time
@@ -24,7 +28,7 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 - `config.yaml`: monitored accounts, synced state path, topic hints, and alias normalization
 - `collectors/registry.yaml`: multi-source collector registry; contract-first for future sources like Reddit or 雪球
 - `collectors/x/source.yaml`: source definition template for the current X collector
-- `memory/state.json`: synced dedupe state (`seen_ids`, `last_run`)
+- `memory/state.json`: synced dedupe state (`seen_ids`, reliable `updated_at`, compatibility `last_run`)
 - `memory/index.json`: synced index of all account/theme memory files
 - `references/local-codex-intro.md`: first-stop intro for a local Codex session; read this before patching if you need the project in one page
 - `references/architecture.md`: stable layer boundaries and contracts; read it before moving logic between collector, store, analyzer, and digest
@@ -55,6 +59,8 @@ Multi-source note:
 - these files are preparation for adding Reddit, 雪球, and other sources without rewriting the analyzer layer
 
 ## Setup
+
+The commands in this document use the deployed Hermes layout under `~/.hermes/skills/signal-radar/`. For repo-local development commands, see `references/local-codex-intro.md`.
 
 Install the required runtime:
 
@@ -146,7 +152,7 @@ python3 ~/.hermes/skills/signal-radar/monitor.py apply-memory --config ~/.hermes
 
 `apply-memory` parses the `MEMORY_UPDATE` block and writes:
 
-- updated `memory/state.json` for去重/last_run
+- updated `memory/state.json` for dedupe; treat `updated_at` as the reliable write timestamp and `last_run` as a compatibility field
 - updated `memory/index.json`
 - `memory/accounts/<username>.json`
 - `memory/themes/<primary-theme>.json`
@@ -158,6 +164,7 @@ Behavior notes:
 - `apply-memory` is idempotent for the same summary input; rerunning it does not inflate theme counts
 - 一级主题和二级主题都会先经过 alias 归一化再写入 memory
 - `latest --field state` returns the synced state file path
+- when reading `memory/state.json`, prefer `updated_at` for the latest successful write time; `last_run` is kept for compatibility with older state consumers
 
 ## Scheduled Use
 

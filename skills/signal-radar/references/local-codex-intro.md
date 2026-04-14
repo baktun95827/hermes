@@ -1,5 +1,7 @@
 # 给本地 Codex 的项目介绍
 
+如果你是在这个 repo 里本机开发 `signal-radar`，先读这份文档。如果你是在 VPS 上以 Hermes 已安装 skill 的方式运行它，请看上一级的 `SKILL.md`；那份文档默认使用 `~/.hermes/skills/signal-radar/...` 路径和部署态工作流。
+
 这是一套长期运行的社交信号采集与分析 skill，目前主来源是 X，后续会扩展到 Reddit、雪球等来源。
 
 项目目标不是“抓到推文就结束”，而是把远程内容收集到本地，再做主题归类、记忆更新和摘要输出。当前运行主线是：
@@ -12,14 +14,17 @@ collect -> local store -> analyzer -> apply-memory
 
 - 这是一个 skill，不是独立 Web 服务
 - 当前主入口是 `monitor.py`
+- `SKILL.md` 主要面向部署态 / Hermes operator
+- 这份文档主要面向 repo-local 开发和本机验证
 - 当前 runtime 还是 X-first，但文档和 schema 已经开始为多来源做准备
 - `memory/` 建议随 Git 同步
 - `cookies.json`、`reports/`、`latest_run.json` 不应提交
+- `memory/state.json` 里 `updated_at` 是当前更可靠的状态写入时间，`last_run` 主要保留给旧消费者兼容使用
 
 ## 当前最重要的文件
 
 - `SKILL.md`
-  运行入口、标准流程、对 Hermes 的调用约定
+  部署态运行入口、标准流程、对 Hermes 的调用约定
 - `monitor.py`
   当前 collector 和 memory bridge 的核心实现
 - `config.yaml`
@@ -65,6 +70,7 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 - 原始运行产物在 `reports/`
 - 最新运行索引在 `latest_run.json`
 - 同步记忆在 `memory/`
+- 去重状态在 `memory/state.json`，其中 `updated_at` 比 `last_run` 更适合表示最近一次成功写入
 - 标准化 batch 产物是 `collector_batch_<run_id>.json`
 - 统一 schema 是 `collector-batch/v1` 和 `collector-item/v1`
 
@@ -72,6 +78,7 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 
 - 不要提交 `cookies.json`
 - 不要把 `reports/` 当成长期数据源
+- 不要把 `last_run` 当成当前状态的唯一时间依据
 - 不要绕过 `apply-memory` 直接手写 memory 回写逻辑
 - 不要把 analyzer 重新耦合回浏览器流程
 - 如果只是要接新 source，优先补 `collectors/<source>/source.yaml` 和标准化输出，不要先改摘要层
