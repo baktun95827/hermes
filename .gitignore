@@ -19,15 +19,15 @@ state.db
 state.db-shm
 state.db-wal
 .env
-skills/x-monitor/cookies.json
-skills/x-monitor/1.py
-skills/x-monitor/debug_kaboruo.png
-# legacy root state file; synced state now lives at skills/x-monitor/memory/state.json
-skills/x-monitor/state.json
-skills/x-monitor/memory/.write.lock
-skills/x-monitor/latest_run.json
-skills/x-monitor/reports/
-skills/x-monitor/debug_*.png
-skills/x-monitor/__pycache__/
+skills/signal-radar/cookies.json
+skills/signal-radar/1.py
+skills/signal-radar/debug_kaboruo.png
+# legacy root state file; synced state now lives at skills/signal-radar/memory/state.json
+skills/signal-radar/state.json
+skills/signal-radar/memory/.write.lock
+skills/signal-radar/latest_run.json
+skills/signal-radar/reports/
+skills/signal-radar/debug_*.png
+skills/signal-radar/__pycache__/
 channel_directory.json
 channel_directory.json

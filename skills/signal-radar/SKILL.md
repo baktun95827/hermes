@@ -1,12 +1,12 @@
 ---
-name: x-monitor
-description: Monitor configured X accounts with Playwright, generate Telegram-ready Chinese briefs grouped by topic, and persist MEMORY_UPDATE into per-account and per-theme memory files for long-running Hermes workflows.
+name: signal-radar
+description: Collect remote social signals starting with configured X accounts via Playwright, generate Telegram-ready Chinese briefs grouped by topic, and persist MEMORY_UPDATE into per-account and per-theme memory files for long-running Hermes workflows.
 metadata:
   hermes:
     tags: [x, twitter, monitoring, telegram, playwright, cron, memory]
 ---
 
-# X Monitor
+# Signal Radar
 
 Use this skill when the user wants Hermes to:
 
@@ -32,7 +32,7 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 
 ## Layered Design
 
-Treat `x-monitor` as four layers:
+Treat `signal-radar` as four layers:
 
 1. `collector`: `monitor.py collect` opens X with Playwright and writes raw artifacts
 2. `local store`: `reports/`, `latest_run.json`, and `memory/` persist raw outputs and synced memory
@@ -65,7 +65,7 @@ playwright install chromium --with-deps
 Export logged-in X cookies from a real browser and save them to:
 
 ```text
-~/.hermes/skills/x-monitor/cookies.json
+~/.hermes/skills/signal-radar/cookies.json
 ```
 
 Accepted cookie formats:
@@ -80,20 +80,20 @@ Then update `config.yaml` with the target accounts and theme hints.
 Run collection:
 
 ```bash
-python3 ~/.hermes/skills/x-monitor/monitor.py collect --config ~/.hermes/skills/x-monitor/config.yaml
+python3 ~/.hermes/skills/signal-radar/monitor.py collect --config ~/.hermes/skills/signal-radar/config.yaml
 ```
 
 Check whether there is anything new:
 
 ```bash
-python3 ~/.hermes/skills/x-monitor/monitor.py latest --config ~/.hermes/skills/x-monitor/config.yaml --field new_tweet_count
-python3 ~/.hermes/skills/x-monitor/monitor.py latest --config ~/.hermes/skills/x-monitor/config.yaml --field warning
+python3 ~/.hermes/skills/signal-radar/monitor.py latest --config ~/.hermes/skills/signal-radar/config.yaml --field new_tweet_count
+python3 ~/.hermes/skills/signal-radar/monitor.py latest --config ~/.hermes/skills/signal-radar/config.yaml --field warning
 ```
 
 Read the normalized collector batch when you want source-agnostic input:
 
 ```bash
-python3 ~/.hermes/skills/x-monitor/monitor.py latest --config ~/.hermes/skills/x-monitor/config.yaml --field collector_batch
+python3 ~/.hermes/skills/signal-radar/monitor.py latest --config ~/.hermes/skills/signal-radar/config.yaml --field collector_batch
 ```
 
 Behavior rules:
@@ -103,7 +103,7 @@ Behavior rules:
 - If there are new tweets, read the latest prompt path:
 
 ```bash
-python3 ~/.hermes/skills/x-monitor/monitor.py latest --config ~/.hermes/skills/x-monitor/config.yaml --field prompt
+python3 ~/.hermes/skills/signal-radar/monitor.py latest --config ~/.hermes/skills/signal-radar/config.yaml --field prompt
 ```
 
 Generate a Chinese brief from that prompt with this output discipline:
@@ -134,13 +134,13 @@ Expected `MEMORY_UPDATE` shape:
 After generating the summary, save the full text to the summary path returned by:
 
 ```bash
-python3 ~/.hermes/skills/x-monitor/monitor.py latest --config ~/.hermes/skills/x-monitor/config.yaml --field summary
+python3 ~/.hermes/skills/signal-radar/monitor.py latest --config ~/.hermes/skills/signal-radar/config.yaml --field summary
 ```
 
 Then persist memory:
 
 ```bash
-python3 ~/.hermes/skills/x-monitor/monitor.py apply-memory --config ~/.hermes/skills/x-monitor/config.yaml --summary-file ~/.hermes/skills/x-monitor/reports/summary_YYYYMMDD_HHMMSS.txt
+python3 ~/.hermes/skills/signal-radar/monitor.py apply-memory --config ~/.hermes/skills/signal-radar/config.yaml --summary-file ~/.hermes/skills/signal-radar/reports/summary_YYYYMMDD_HHMMSS.txt
 ```
 
 `apply-memory` parses the `MEMORY_UPDATE` block and writes:

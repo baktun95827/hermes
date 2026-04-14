@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-X Monitor for Hermes.
+Signal Radar for Hermes.
 
 Commands:
   - collect: scrape configured X accounts and write prompt/report artifacts
@@ -2185,7 +2185,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="X Monitor for Hermes")
+    parser = argparse.ArgumentParser(description="Signal Radar for Hermes")
     parser.add_argument(
         "--config",
         default=str(SCRIPT_DIR / "config.yaml"),

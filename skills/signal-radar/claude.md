@@ -1,8 +1,8 @@
-# X Monitor — Hermes Agent 推文监控与智能分析系统
+# Signal Radar — Hermes Agent 推文监控与智能分析系统
 
 ## 项目概述
 
-X Monitor 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统。它定期抓取指定账号的推文，通过 LLM 按主题归类生成中文简报，并发送到 Telegram。系统具备去重、记忆、账号发现等能力，设计目标是成为一个**长期运行、越用越聪明**的信息助手。
+Signal Radar 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统。它定期抓取指定账号的推文，通过 LLM 按主题归类生成中文简报，并发送到 Telegram。系统具备去重、记忆、账号发现等能力，设计目标是成为一个**长期运行、越用越聪明**的信息助手。
 
 ## 文档分工
 
@@ -15,7 +15,7 @@ X Monitor 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统�
 
 ### 核心理念
 
-传统的推文监控工具是"按账号罗列"——你关注了谁，就看谁的推文。X Monitor 的思路不同：它把所有监控账号的推文打散，**按主题重新组织**。你关注的不是"Elon Musk 说了什么"，而是"AI 领域今天发生了什么，哪些人在讨论"。
+传统的推文监控工具是"按账号罗列"——你关注了谁，就看谁的推文。Signal Radar 的思路不同：它把所有监控账号的推文打散，**按主题重新组织**。你关注的不是"Elon Musk 说了什么"，而是"AI 领域今天发生了什么，哪些人在讨论"。
 
 这更接近一个私人情报分析员的工作方式：跨源收集 → 主题归类 → 趋势追踪 → 简报输出。
 
@@ -206,7 +206,7 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 
 ### 4. 主题归类与 MEMORY_UPDATE 协议
 
-X Monitor 的核心不是“按账号罗列推文”，而是“按主题重组多个账号的动态”。因此 `collect` 生成的 prompt 会要求模型输出 Telegram 正文，以及一个只供系统消费的 `MEMORY_UPDATE`。
+Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重组多个账号的动态”。因此 `collect` 生成的 prompt 会要求模型输出 Telegram 正文，以及一个只供系统消费的 `MEMORY_UPDATE`。
 
 现在的正式协议是严格 JSON。例如：
 
@@ -337,7 +337,7 @@ X Monitor 的核心不是“按账号罗列推文”，而是“按主题重组�
 ## 文件结构
 
 ```
-~/.hermes/skills/x-monitor/
+~/.hermes/skills/signal-radar/
 ├── monitor.py              # 主脚本
 ├── config.yaml             # 配置文件
 ├── cookies.json            # X 登录 cookies（敏感，不要提交到 git）
@@ -376,7 +376,7 @@ X Monitor 的核心不是“按账号罗列推文”，而是“按主题重组�
 ### 手动运行
 
 ```bash
-cd ~/.hermes/skills/x-monitor
+cd ~/.hermes/skills/signal-radar
 python3 monitor.py collect --config config.yaml
 ```
 
@@ -395,7 +395,7 @@ python3 monitor.py latest --config config.yaml --field state
 在 Hermes 对话中：
 
 ```
-每 2 小时运行 python3 ~/.hermes/skills/x-monitor/monitor.py collect --config ~/.hermes/skills/x-monitor/config.yaml。
+每 2 小时运行 python3 ~/.hermes/skills/signal-radar/monitor.py collect --config ~/.hermes/skills/signal-radar/config.yaml。
 然后读取 latest_run.json 里的 new_tweet_count、warning 和 prompt 路径。
 如果 warning 存在，直接把 warning 发到 Telegram。
 如果 new_tweet_count 为 0，就告诉我本轮没有新推文并停止。
@@ -403,7 +403,7 @@ python3 monitor.py latest --config config.yaml --field state
 发送到 Telegram 时不要包含 MEMORY_UPDATE 段。
 完整总结末尾必须带严格 JSON 的 MEMORY_UPDATE，
 并且把完整总结保存到 latest_run.json 里的 summary 路径，
-再运行 python3 ~/.hermes/skills/x-monitor/monitor.py apply-memory --config ~/.hermes/skills/x-monitor/config.yaml --summary-file <summary_path>。
+再运行 python3 ~/.hermes/skills/signal-radar/monitor.py apply-memory --config ~/.hermes/skills/signal-radar/config.yaml --summary-file <summary_path>。
 ```
 
 Hermes 会创建 cron job 自动执行。
