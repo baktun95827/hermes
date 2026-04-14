@@ -7,6 +7,7 @@ Signal Radar 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系�
 ## 文档分工
 
 - `SKILL.md`：运行入口和标准操作流程
+- `references/local-codex-intro.md`：给本地 Codex 的一页式项目介绍
 - `references/architecture.md`：collector / local store / analyzer / digest 四层边界与契约
 - `references/collector-schema.md`：多来源 collector 的统一输出 schema
 - `claude.md`：当前实现细节、文件结构、调试方式、限制和演进方向

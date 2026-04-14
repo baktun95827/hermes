@@ -26,6 +26,7 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 - `collectors/x/source.yaml`: source definition template for the current X collector
 - `memory/state.json`: synced dedupe state (`seen_ids`, `last_run`)
 - `memory/index.json`: synced index of all account/theme memory files
+- `references/local-codex-intro.md`: first-stop intro for a local Codex session; read this before patching if you need the project in one page
 - `references/architecture.md`: stable layer boundaries and contracts; read it before moving logic between collector, store, analyzer, and digest
 - `references/collector-schema.md`: unified collector batch/item contract for future multi-source ingestion
 - `claude.md`: implementation notes and debugging detail; read it when patching selectors, manifests, or memory schemas
