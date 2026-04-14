@@ -66,6 +66,7 @@ collector -> local store -> analyzer -> digest / alerts
 
 - `monitor.py collect` 直接负责 X 的抓取
 - 还没有改成 runtime 按 `registry.yaml` 动态加载所有 source
+- `collect` 已经开始额外输出标准化的 `collector_batch_<run_id>.json`
 
 但为了以后接 Reddit、雪球等来源，仓库现在已经补了两层契约：
 
@@ -118,7 +119,7 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 
 当前 `monitor.py` 是一个三段式 CLI，而不是单次跑完所有逻辑的脚本：
 
-- `collect`：抓取账号页面，生成 `data/prompt/report/summary/memory_update/warning` 等产物路径，并刷新 `latest_run.json`
+- `collect`：抓取账号页面，生成 `data/collector_batch/prompt/report/summary/memory_update/warning` 等产物路径，并刷新 `latest_run.json`
 - `latest`：稳定读取 `latest_run.json`，避免 Hermes 通过 glob 猜文件名
 - `apply-memory`：解析 summary 尾部的 `MEMORY_UPDATE`，做主题归一化、幂等检查、记忆回写
 
@@ -133,6 +134,7 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 其中 `latest_run.json` 是关键的“控制面索引”。它会记录当前 run 的：
 
 - `data`
+- `collector_batch`
 - `prompt`
 - `report`
 - `summary`
@@ -143,6 +145,13 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 - `memory_dir`
 
 所以 Hermes 不需要猜目录结构，只需要读取 `latest` 输出。
+
+当前 `collector_batch_<run_id>.json` 已经开始使用统一 schema：
+
+- 顶层是 `collector-batch/v1`
+- 每个 item 是 `collector-item/v1`
+- 现在仍然只由 X collector 写入
+- 但后续 Reddit、雪球只要也产出同样的 item 结构，analyzer 就能逐步复用
 
 ### 2. 推文抓取
 
@@ -351,6 +360,7 @@ X Monitor 的核心不是“按账号罗列推文”，而是“按主题重组�
 ├── SKILL.md                # Hermes skill 运行说明
 ├── reports/                # 输出目录
 │   ├── data_YYYYMMDD_HHMMSS.json     # 原始数据（JSON）
+│   ├── collector_batch_YYYYMMDD_HHMMSS.json # 标准化 collector batch
 │   ├── prompt_YYYYMMDD_HHMMSS.txt    # LLM prompt
 │   ├── report_YYYYMMDD_HHMMSS.txt    # 人类可读报告
 │   ├── summary_YYYYMMDD_HHMMSS.txt   # Hermes 生成的完整总结（含 MEMORY_UPDATE）
@@ -374,6 +384,7 @@ python3 monitor.py collect --config config.yaml
 
 ```bash
 python3 monitor.py latest --config config.yaml --field new_tweet_count
+python3 monitor.py latest --config config.yaml --field collector_batch
 python3 monitor.py latest --config config.yaml --field prompt
 python3 monitor.py latest --config config.yaml --field warning
 python3 monitor.py latest --config config.yaml --field state

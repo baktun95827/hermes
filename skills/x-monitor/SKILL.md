@@ -50,6 +50,7 @@ Multi-source note:
 
 - `registry.yaml` and `collectors/x/source.yaml` now define the source contract
 - current runtime is still X-first and enters through `monitor.py collect`
+- `collect` now also writes `collector_batch_<run_id>.json` in `collector-batch/v1` format
 - these files are preparation for adding Reddit, 雪球, and other sources without rewriting the analyzer layer
 
 ## Setup
@@ -87,6 +88,12 @@ Check whether there is anything new:
 ```bash
 python3 ~/.hermes/skills/x-monitor/monitor.py latest --config ~/.hermes/skills/x-monitor/config.yaml --field new_tweet_count
 python3 ~/.hermes/skills/x-monitor/monitor.py latest --config ~/.hermes/skills/x-monitor/config.yaml --field warning
+```
+
+Read the normalized collector batch when you want source-agnostic input:
+
+```bash
+python3 ~/.hermes/skills/x-monitor/monitor.py latest --config ~/.hermes/skills/x-monitor/config.yaml --field collector_batch
 ```
 
 Behavior rules:

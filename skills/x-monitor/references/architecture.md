@@ -100,13 +100,14 @@ collector 未来不应该只对应 X。它应该允许不同来源使用不同 t
 ### 输出
 
 - `reports/data_<run_id>.json`
+- `reports/collector_batch_<run_id>.json`
 - `reports/prompt_<run_id>.txt`
 - `reports/report_<run_id>.txt`
 - 可选的 `reports/warning_<run_id>.txt`
 - `latest_run.json`
 - 更新后的 `memory/state.json`
 
-长期目标上，collector 还应该能统一输出 `collector-batch/v1` 和 `collector-item/v1` 契约，便于 analyzer 以后跨来源工作。当前 schema 定义见 `references/collector-schema.md`。
+当前实现已经会额外输出 `collector-batch/v1` 和 `collector-item/v1` 契约，便于 analyzer 以后跨来源工作。schema 定义见 `references/collector-schema.md`。
 
 ### 不应该负责什么
 
@@ -156,6 +157,7 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 这类文件是“某一轮 run 的快照”，主要用于调试、回放和后续处理：
 
 - `reports/data_<run_id>.json`
+- `reports/collector_batch_<run_id>.json`
 - `reports/prompt_<run_id>.txt`
 - `reports/report_<run_id>.txt`
 - `reports/summary_<run_id>.txt`
@@ -179,6 +181,7 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `run_id`
 - `status`
 - `paths.data`
+- `paths.collector_batch`
 - `paths.prompt`
 - `paths.report`
 - `paths.summary`
@@ -317,6 +320,7 @@ analyzer 至少应该回答这些问题：
 collector 必须留下足够多的本地证据，至少包括：
 
 - 结构化数据 JSON
+- 标准化 collector batch JSON
 - prompt 文本
 - report 文本
 - 需要时的 warning 文件
@@ -329,6 +333,7 @@ collector 必须留下足够多的本地证据，至少包括：
 analyzer 依赖的应该是稳定文件路径，而不是浏览器上下文。当前主契约是：
 
 - `latest --field prompt`
+- `latest --field collector_batch`
 - `latest --field summary`
 - `latest --field state`
 - `latest --field memory_dir`

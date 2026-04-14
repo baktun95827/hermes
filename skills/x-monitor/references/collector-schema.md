@@ -55,6 +55,14 @@ collectors/
 当前仓库已经先补了 `registry.yaml` 和 `collectors/x/source.yaml`。  
 需要注意：**它们现在是契约和设计骨架，不是已经接入运行时的动态加载系统。**
 
+当前运行时已经完成了第一步接线：
+
+- `monitor.py collect` 会额外写出 `reports/collector_batch_<run_id>.json`
+- 该文件顶层使用 `collector-batch/v1`
+- 其中每个 item 使用 `collector-item/v1`
+
+也就是说，X 现在已经开始产出统一 schema，但 analyzer 还没有完全切到只消费这份 schema。
+
 ## Registry 契约
 
 `collectors/registry.yaml` 建议至少包含：
@@ -155,6 +163,17 @@ collector 交给后续层时，建议统一成一个 batch envelope。推荐版�
 - `warnings`
 - `next_cursor`
 - `raw_meta`
+- `item_schema_version`
+- `item_count`
+
+### 多目标 collector 的约定
+
+如果一次 run 同时抓多个目标，不强制每个目标单独一个文件。当前 X collector 的做法是：
+
+- 顶层仍然输出一个 `collector-batch/v1`
+- `target.kind` 可为 `account_set`
+- `target.members` 记录本轮配置里的多个账号
+- 每个 item 再通过自身字段和 `source_meta.source_account` 保留来源上下文
 
 ## 标准输出：Item Schema
 
@@ -334,16 +353,16 @@ batch 里的每个 item 建议统一成：
 
 ## 当前落地范围
 
-当前这一步只完成了三件事：
+当前这一步已经完成了四件事：
 
 1. 定义 `collectors/registry.yaml`
 2. 定义 `collectors/x/source.yaml`
 3. 定义统一 collector schema 文档
+4. 让 `monitor.py collect` 开始额外输出 `collector-batch/v1`
 
 还没有完成的部分：
 
 - 运行时按 `registry.yaml` 自动加载 source
-- 把 `monitor.py collect` 的现有输出真正映射成 `collector-batch/v1`
 - 新增 Reddit / 雪球 collector
 
-也就是说，**这一步是在定契约，不是在宣称多源运行时已经完成。**
+也就是说，**这一步已经让 X 先产出统一 schema，但还没有宣称多源运行时已经完成。**

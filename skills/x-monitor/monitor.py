@@ -48,6 +48,12 @@ STATUS_LOGIN_WALL = "login_wall"
 STATUS_NO_VISIBLE_TWEETS = "no_visible_tweets"
 STATUS_ERROR = "error"
 
+COLLECTOR_BATCH_SCHEMA_VERSION = "collector-batch/v1"
+COLLECTOR_ITEM_SCHEMA_VERSION = "collector-item/v1"
+X_SOURCE_ID = "x"
+X_COLLECTOR_TRANSPORT = "browser"
+X_COLLECTOR_IMPLEMENTATION = "playwright"
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -201,6 +207,7 @@ def write_latest_manifest(latest_run_file: Path, payload: dict[str, Any]) -> Non
 def build_artifact_paths(output_dir: Path, run_id: str) -> dict[str, Path]:
     return {
         "data": output_dir / f"data_{run_id}.json",
+        "collector_batch": output_dir / f"collector_batch_{run_id}.json",
         "prompt": output_dir / f"prompt_{run_id}.txt",
         "report": output_dir / f"report_{run_id}.txt",
         "summary": output_dir / f"summary_{run_id}.txt",
@@ -1168,6 +1175,174 @@ def extract_mentions(text: str) -> list[str]:
     return re.findall(r"@(\w+)", text)
 
 
+def build_x_item_id(tweet: dict[str, Any]) -> str:
+    tweet_id = str(tweet.get("id") or "").strip()
+    if tweet_id:
+        return tweet_id
+
+    fallback_material = "|".join(
+        [
+            str(tweet.get("author") or ""),
+            str(tweet.get("source_account") or ""),
+            str(tweet.get("created_at") or ""),
+            str(tweet.get("tweet_url") or ""),
+            str(tweet.get("text") or ""),
+        ]
+    )
+    digest = hashlib.sha256(
+        fallback_material.encode("utf-8")
+    ).hexdigest()[:20]
+    return f"synthetic-{digest}"
+
+
+def build_x_author_payload(username: str) -> dict[str, Any]:
+    normalized = normalize_account_name(username)
+    handle = f"@{normalized}" if normalized else None
+    url = f"https://x.com/{normalized}" if normalized else None
+    display_name = handle or normalized or ""
+    return {
+        "source": X_SOURCE_ID,
+        "entity_type": "account",
+        "entity_id": normalized,
+        "canonical_entity_id": f"{X_SOURCE_ID}:{normalized}" if normalized else None,
+        "display_name": display_name,
+        "handle": handle,
+        "url": url,
+    }
+
+
+def build_x_item_url(tweet: dict[str, Any], item_id: str, author: str) -> str:
+    existing = str(tweet.get("tweet_url") or "").strip()
+    if existing:
+        return existing
+    normalized_author = normalize_account_name(author)
+    if normalized_author and item_id and not item_id.startswith("synthetic-"):
+        return f"https://x.com/{normalized_author}/status/{item_id}"
+    if normalized_author:
+        return f"https://x.com/{normalized_author}"
+    return ""
+
+
+def normalize_x_tweet_to_collector_item(
+    tweet: dict[str, Any],
+    collected_at: str,
+) -> dict[str, Any]:
+    author = normalize_account_name(
+        tweet.get("author") or tweet.get("source_account") or ""
+    )
+    source_account = normalize_account_name(tweet.get("source_account") or author)
+    item_id = build_x_item_id(tweet)
+    image_urls = [
+        str(url).strip()
+        for url in tweet.get("images", [])
+        if str(url).strip()
+    ]
+    media = [{"type": "image", "url": url} for url in image_urls]
+    if tweet.get("has_video"):
+        media.append({"type": "video", "url": None})
+
+    mentions = [
+        normalize_account_name(item)
+        for item in tweet.get("mentions", [])
+        if normalize_account_name(item)
+    ]
+
+    return {
+        "schema_version": COLLECTOR_ITEM_SCHEMA_VERSION,
+        "source": X_SOURCE_ID,
+        "item_id": item_id,
+        "canonical_id": f"{X_SOURCE_ID}:{item_id}",
+        "content_type": "post",
+        "published_at": tweet.get("created_at"),
+        "collected_at": collected_at,
+        "url": build_x_item_url(tweet, item_id, author),
+        "title": None,
+        "text": tweet.get("text") or "",
+        "language": None,
+        "author": build_x_author_payload(author),
+        "metrics": {
+            "likes": tweet.get("like_count", 0),
+            "replies": tweet.get("reply_count", 0),
+            "reposts": tweet.get("retweet_count", 0),
+            "views": None,
+        },
+        "media": media,
+        "relations": {
+            "is_repost": bool(tweet.get("is_retweet")),
+            "quoted_item_id": None,
+            "reply_to_item_id": None,
+            "mentioned_entities": [f"{X_SOURCE_ID}:{item}" for item in mentions],
+        },
+        "source_meta": {
+            "source_account": source_account,
+            "quoted_text": tweet.get("quoted_text") or None,
+            "has_video": bool(tweet.get("has_video")),
+            "image_urls": image_urls,
+            "mentioned_users": mentions,
+        },
+    }
+
+
+def build_collector_target(accounts: list[str]) -> dict[str, Any]:
+    normalized = [
+        normalize_account_name(item)
+        for item in accounts
+        if normalize_account_name(item)
+    ]
+    if len(normalized) == 1:
+        username = normalized[0]
+        return {
+            "kind": "account",
+            "id": username,
+            "display_name": f"@{username}",
+        }
+
+    preview = ", ".join(f"@{item}" for item in normalized[:3])
+    if len(normalized) > 3:
+        preview += f" +{len(normalized) - 3}"
+    return {
+        "kind": "account_set",
+        "id": "configured_accounts",
+        "display_name": preview or "configured accounts",
+        "members": normalized,
+    }
+
+
+def build_x_collector_batch(
+    run_id: str,
+    collected_at: str,
+    accounts: list[str],
+    fetch_results: list["FetchResult"],
+    warning: str | None,
+    config_path: str,
+) -> dict[str, Any]:
+    items = [
+        normalize_x_tweet_to_collector_item(tweet, collected_at)
+        for result in fetch_results
+        for tweet in result.tweets
+    ]
+    return {
+        "schema_version": COLLECTOR_BATCH_SCHEMA_VERSION,
+        "item_schema_version": COLLECTOR_ITEM_SCHEMA_VERSION,
+        "source": X_SOURCE_ID,
+        "collector_run_id": run_id,
+        "collected_at": collected_at,
+        "target": build_collector_target(accounts),
+        "collector": {
+            "transport": X_COLLECTOR_TRANSPORT,
+            "implementation": X_COLLECTOR_IMPLEMENTATION,
+            "entrypoint": "monitor.py collect",
+        },
+        "item_count": len(items),
+        "items": items,
+        "warnings": [warning] if warning else [],
+        "raw_meta": {
+            "config_path": config_path,
+            "account_results": [asdict(result) for result in fetch_results],
+        },
+    }
+
+
 class DiscoveryEngine:
     def __init__(self, monitored: list[str], min_interactions: int = 3):
         self.monitored = {normalize_account_name(item).lower() for item in monitored}
@@ -1723,19 +1898,32 @@ async def collect(config_path: str) -> int:
     now = utc_now()
     run_id = timestamp_slug(now)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
+    collected_at = now.isoformat()
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_paths = build_artifact_paths(output_dir, run_id)
+    collector_batch = build_x_collector_batch(
+        run_id=run_id,
+        collected_at=collected_at,
+        accounts=accounts,
+        fetch_results=fetch_results,
+        warning=warning,
+        config_path=config["config_path"],
+    )
 
     data_payload = {
         "run_id": run_id,
         "timestamp": now_str,
         "config_path": config["config_path"],
+        "collector_batch_schema": COLLECTOR_BATCH_SCHEMA_VERSION,
+        "collector_item_schema": COLLECTOR_ITEM_SCHEMA_VERSION,
+        "collector_batch_path": str(artifact_paths["collector_batch"]),
         "account_results": [asdict(result) for result in fetch_results],
         "account_tweets": account_tweets,
         "recommendations": recommendations,
         "keywords": keywords,
         "warning": warning,
     }
+    atomic_write_json(artifact_paths["collector_batch"], collector_batch)
     atomic_write_json(artifact_paths["data"], data_payload)
     atomic_write_text(artifact_paths["prompt"], prompt, encoding="utf-8")
     full_report = f"📊 X 监控报告 — {now_str}\n\n{raw_report}\n{discovery_section}"
@@ -1754,6 +1942,7 @@ async def collect(config_path: str) -> int:
         "config_path": config["config_path"],
         "paths": {
             "data": str(artifact_paths["data"]),
+            "collector_batch": str(artifact_paths["collector_batch"]),
             "prompt": str(artifact_paths["prompt"]),
             "report": str(artifact_paths["report"]),
             "summary": str(artifact_paths["summary"]),
@@ -1789,6 +1978,7 @@ async def collect(config_path: str) -> int:
         print(f"   关键词: {', '.join(keywords[:5])}")
     print(f"{'=' * 60}")
     print(f"\n📁 数据: {artifact_paths['data']}")
+    print(f"📦 Collector Batch: {artifact_paths['collector_batch']}")
     print(f"📝 Prompt: {artifact_paths['prompt']}")
     print(f"📄 报告: {artifact_paths['report']}")
     print(f"🧭 最新索引: {latest_run_file}")
@@ -1830,7 +2020,15 @@ def latest(config_path: str, field: str | None) -> int:
         print(payload.get("paths", {}).get("state") or "")
         return 0
 
-    if field in {"data", "prompt", "report", "summary", "memory_update", "warning"}:
+    if field in {
+        "data",
+        "collector_batch",
+        "prompt",
+        "report",
+        "summary",
+        "memory_update",
+        "warning",
+    }:
         value = payload.get("paths", {}).get(field) or ""
         print(value)
         return 0
@@ -2004,6 +2202,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[
             "manifest",
             "data",
+            "collector_batch",
             "prompt",
             "report",
             "summary",
