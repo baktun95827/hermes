@@ -1,0 +1,46 @@
+version: 1
+
+contracts:
+  batch_schema: "collector-batch/v1"
+  item_schema: "collector-item/v1"
+
+defaults:
+  enabled: true
+  runtime: python
+  target_kind: account
+
+sources:
+  x:
+    display_name: "X / Twitter"
+    enabled: true
+    source_file: "collectors/x/source.yaml"
+    transport: browser
+    runtime: python
+    target_kind: account
+    auth_type: cookies
+    emits:
+      batch_schema: "collector-batch/v1"
+      item_schema: "collector-item/v1"
+    status:
+      lifecycle: active
+      runtime_integration: legacy-direct
+      notes: "Current runtime still enters through monitor.py collect; registry and source.yaml define the contract for future multi-source orchestration."
+
+  # Future examples:
+  # reddit:
+  #   display_name: "Reddit"
+  #   enabled: false
+  #   source_file: "collectors/reddit/source.yaml"
+  #   transport: http
+  #   runtime: python
+  #   target_kind: subreddit
+  #   auth_type: none
+  #
+  # xueqiu:
+  #   display_name: "雪球"
+  #   enabled: false
+  #   source_file: "collectors/xueqiu/source.yaml"
+  #   transport: browser
+  #   runtime: python
+  #   target_kind: account
+  #   auth_type: cookies

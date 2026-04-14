@@ -8,6 +8,7 @@ X Monitor 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统�
 
 - `SKILL.md`：运行入口和标准操作流程
 - `references/architecture.md`：collector / local store / analyzer / digest 四层边界与契约
+- `references/collector-schema.md`：多来源 collector 的统一输出 schema
 - `claude.md`：当前实现细节、文件结构、调试方式、限制和演进方向
 
 如果你要判断“某段逻辑该放哪一层”，先读 `references/architecture.md`。如果你要改选择器、状态结构或落盘行为，再看这份 `claude.md`。
@@ -58,6 +59,23 @@ collector -> local store -> analyzer -> digest / alerts
 - digest / alerts 失败，通常是错误地发送、漏发、误发
 
 因此当前实现不建议用“一个大 agent 从打开 X 一路干到发 Telegram”为主路径。更稳的方式是：collector 只负责拿材料，analyzer 只负责判断价值，digest / alerts 只负责对外输出。
+
+## 多来源准备态
+
+当前运行时仍然是 X-first：
+
+- `monitor.py collect` 直接负责 X 的抓取
+- 还没有改成 runtime 按 `registry.yaml` 动态加载所有 source
+
+但为了以后接 Reddit、雪球等来源，仓库现在已经补了两层契约：
+
+- `collectors/registry.yaml`
+  - 注册来源、transport、source definition 路径
+- `collectors/<source>/source.yaml`
+  - 描述这个来源是 browser / http / api / rss 哪种抓取方式
+  - 描述认证方式、healthcheck、能力边界、标准化约定
+
+也就是说，这一步已经把“多来源接入方式”写清楚了，但还没有宣称运行时已经全面切到多来源框架。
 
 ---
 
@@ -314,8 +332,13 @@ X Monitor 的核心不是“按账号罗列推文”，而是“按主题重组�
 ├── monitor.py              # 主脚本
 ├── config.yaml             # 配置文件
 ├── cookies.json            # X 登录 cookies（敏感，不要提交到 git）
+├── collectors/
+│   ├── registry.yaml       # 多来源 collector 注册表
+│   └── x/
+│       └── source.yaml     # X 来源定义模板
 ├── references/
-│   └── architecture.md     # 四层边界、契约和职责分工
+│   ├── architecture.md     # 四层边界、契约和职责分工
+│   └── collector-schema.md # 统一 collector 输出 schema
 ├── memory/                 # 长期记忆目录
 │   ├── state.json          # 去重状态（建议提交到 git）
 │   ├── accounts/

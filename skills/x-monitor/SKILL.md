@@ -22,9 +22,12 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 
 - `monitor.py`: collects tweets, exposes the latest artifact manifest, and applies `MEMORY_UPDATE`
 - `config.yaml`: monitored accounts, synced state path, topic hints, and alias normalization
+- `collectors/registry.yaml`: multi-source collector registry; contract-first for future sources like Reddit or 雪球
+- `collectors/x/source.yaml`: source definition template for the current X collector
 - `memory/state.json`: synced dedupe state (`seen_ids`, `last_run`)
 - `memory/index.json`: synced index of all account/theme memory files
 - `references/architecture.md`: stable layer boundaries and contracts; read it before moving logic between collector, store, analyzer, and digest
+- `references/collector-schema.md`: unified collector batch/item contract for future multi-source ingestion
 - `claude.md`: implementation notes and debugging detail; read it when patching selectors, manifests, or memory schemas
 
 ## Layered Design
@@ -42,6 +45,12 @@ Boundary rules:
 - the analyzer must not open webpages or mutate memory files directly
 - the digest should read `latest` output and summary files, not scrape directories or guess paths
 - `apply-memory` is the only bridge that writes analyzer output back into `memory/`
+
+Multi-source note:
+
+- `registry.yaml` and `collectors/x/source.yaml` now define the source contract
+- current runtime is still X-first and enters through `monitor.py collect`
+- these files are preparation for adding Reddit, 雪球, and other sources without rewriting the analyzer layer
 
 ## Setup
 

@@ -14,6 +14,7 @@ collector -> local store -> analyzer -> digest / alerts
 
 - `collector`
   - `monitor.py collect`
+  - `collectors/registry.yaml` 和 `collectors/<source>/source.yaml` 现在作为多源接入契约存在，但运行时尚未切到 registry 驱动
 - `local store`
   - `reports/*.json|*.txt`
   - `latest_run.json`
@@ -59,6 +60,26 @@ collector -> local store -> analyzer -> digest / alerts
 ### 当前负责模块
 
 - `monitor.py collect`
+- `collectors/registry.yaml`
+- `collectors/<source>/source.yaml`
+
+### 多源设计约束
+
+collector 未来不应该只对应 X。它应该允许不同来源使用不同 transport，例如：
+
+- `browser`
+- `http`
+- `api`
+- `rss`
+
+因此现在先引入两层契约：
+
+- `collectors/registry.yaml`
+  - 注册有哪些 source，以及它们的入口和 transport
+- `collectors/<source>/source.yaml`
+  - 描述这个 source 的抓取方式、认证方式、healthcheck 和标准化规则
+
+需要注意：当前仓库里这套 registry/source 定义还是“准备态契约”，还没有替换现有 `monitor.py collect` 的直接入口。
 
 ### 应该负责什么
 
@@ -84,6 +105,8 @@ collector -> local store -> analyzer -> digest / alerts
 - 可选的 `reports/warning_<run_id>.txt`
 - `latest_run.json`
 - 更新后的 `memory/state.json`
+
+长期目标上，collector 还应该能统一输出 `collector-batch/v1` 和 `collector-item/v1` 契约，便于 analyzer 以后跨来源工作。当前 schema 定义见 `references/collector-schema.md`。
 
 ### 不应该负责什么
 
@@ -310,6 +333,8 @@ analyzer 依赖的应该是稳定文件路径，而不是浏览器上下文。�
 - `latest --field state`
 - `latest --field memory_dir`
 
+如果未来进入多源模式，analyzer 还应该优先消费统一的 collector schema，而不是来源专属字段。
+
 ### Analyzer -> Local Store
 
 analyzer 的职责是输出可解析的 `MEMORY_UPDATE`。真正把它翻译成记忆文件的写入者，应该始终是 `apply-memory`。
@@ -395,6 +420,23 @@ digest 应该从 manifest 做判断，而不是自己扫描目录、猜最新文
 - 定时运行和正式 digest 放在 VPS
 - 需要跨机延续状态时，用 Git 同步 `memory/`
 - `cookies.json` 保持每台机器本地维护
+
+## 多源演进的当前状态
+
+现在已经完成：
+
+- 四层架构边界
+- collector registry 设计
+- source definition 设计
+- 统一 collector 输出 schema 设计
+
+现在还没有完成：
+
+- runtime 通过 registry 动态加载 source
+- X collector 从单一 `monitor.py` 入口彻底拆成多源 collector 框架的一部分
+- Reddit / 雪球等新 source 的真实 collector 实现
+
+所以这一步的定位是：先把契约和骨架定下来，再逐步替换运行时。
 
 ## 演进原则
 

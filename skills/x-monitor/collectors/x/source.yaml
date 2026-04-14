@@ -1,0 +1,74 @@
+version: 1
+id: x
+display_name: "X / Twitter"
+enabled: true
+
+collector:
+  runtime: python
+  transport: browser
+  implementation: playwright
+  entrypoint: "monitor.py"
+  command:
+    - "python3"
+    - "monitor.py"
+    - "collect"
+    - "--config"
+    - "config.yaml"
+  output:
+    batch_schema: "collector-batch/v1"
+    item_schema: "collector-item/v1"
+
+targets:
+  kind: account
+  configured_in: "config.yaml:accounts"
+  examples:
+    - "elonmusk"
+
+auth:
+  type: cookies
+  required: true
+  machine_local: true
+  secret_path_hint: "cookies.json"
+  accepted_formats:
+    - "simple json object: { auth_token, ct0 }"
+    - "browser-exported cookie array"
+
+fetch:
+  pagination_mode: scroll
+  configured_in:
+    max_items_per_target: "config.yaml:tweets_per_account"
+    scroll_count: "config.yaml:scroll_count"
+    delay_between_targets_seconds: "config.yaml:delay_between_accounts"
+  timeout_seconds: 45
+  retries: 2
+
+capabilities:
+  text: true
+  media: true
+  quoted_content: true
+  repost_detection: true
+  mention_discovery: true
+  comments: false
+
+healthcheck:
+  detects_login_wall: true
+  warns_on_zero_visible_items: true
+  captures_debug_screenshot_on_failure: true
+
+normalization:
+  actor_namespace: "x"
+  canonical_item_id_format: "x:<status_id>"
+  canonical_actor_id_format: "x:<username>"
+  source_meta_fields:
+    - "is_retweet"
+    - "quoted_text"
+    - "has_video"
+    - "image_urls"
+    - "mentioned_users"
+
+status:
+  lifecycle: active
+  runtime_integration: legacy-direct
+  notes:
+    - "This source definition is the contract for future multi-source orchestration."
+    - "Current runtime still calls monitor.py collect directly instead of loading registry.yaml."
