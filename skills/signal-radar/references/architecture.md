@@ -264,10 +264,12 @@ local store 的职责是“保存状态并暴露清晰契约”，不是“替�
   - `primary_themes`
   - `secondary_themes`
   - `account_notes`
+  - `signal_evaluations`
   - `entity_updates`
   - `event_updates`
   - `macro_updates`
   - `source_assessments`
+  - `alert_candidates`
 
 ### 不应该负责什么
 
@@ -275,6 +277,7 @@ local store 的职责是“保存状态并暴露清晰契约”，不是“替�
 - 重试浏览器
 - 判断 cookies 是否健康
 - 直接改写 `memory/*.json`
+- 最终决定是否发送候选告警
 
 analyzer 应该只吃本地落地的数据。如果 analyzer 觉得材料不够，通常说明 collector 的契约还不够完整，应该补 collector，而不是让 analyzer 自己去碰网页。
 
@@ -286,10 +289,13 @@ analyzer 至少应该回答这些问题：
 - 它们属于哪些一级主题
 - 各一级主题下应该记录哪些二级主题
 - 哪些账号画像需要更新
+- 哪些内容是新事实、新角度、复读或噪音
+- 每个重要信号的 `novelty_level`、`evidence_strength`、`memory_action` 和 `alert_level` 应该是什么
 - 哪些金融标的、公司、行业链条 claim 值得进入 `entity_updates`
 - 哪些持续事件需要按时间线进入 `event_updates`
 - 哪些宏观背景或趋势需要进入 `macro_updates`
 - 哪些来源可信度或确认要求需要更新到 `source_assessments`
+- 哪些内容只是 `alert_candidates`，需要交给 digest / alerts 再决定是否发送
 - 哪些内容值得进入最终 digest
 
 它不应该机械地把每条推文都重复一遍。

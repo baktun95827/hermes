@@ -62,8 +62,33 @@ VERIFICATION_STATUSES = {
     "superseded",
     "rejected",
 }
+SIGNAL_TYPES = {
+    "new_fact",
+    "new_angle",
+    "repeat",
+    "noise",
+    "unknown",
+}
+NOVELTY_LEVELS = {"high", "medium", "low", "none"}
+EVIDENCE_STRENGTHS = {
+    "weak",
+    "single_source",
+    "multi_source",
+    "official",
+    "unknown",
+}
+MEMORY_ACTIONS = {
+    "write",
+    "merge",
+    "skip",
+    "supersede",
+    "reject",
+    "unknown",
+}
+ALERT_LEVELS = {"none", "watch", "important", "urgent"}
 SKIP_MEMORY_ACTIONS = {"ignore", "ignored", "reject", "rejected", "skip", "no_op", "noop"}
 SKIP_NOVELTY_VALUES = {"duplicate", "duplicated", "none", "low_value", "no_value"}
+SKIP_SIGNAL_TYPES = {"noise"}
 
 
 def utc_now() -> datetime:
@@ -98,14 +123,161 @@ def normalize_verification_status(value: Any) -> str:
     return status if status in VERIFICATION_STATUSES else "unverified"
 
 
+def normalize_signal_type(value: Any) -> str:
+    signal_type = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "fact": "new_fact",
+        "new": "new_fact",
+        "new_view": "new_angle",
+        "angle": "new_angle",
+        "duplicate": "repeat",
+        "duplicated": "repeat",
+    }
+    signal_type = aliases.get(signal_type, signal_type)
+    return signal_type if signal_type in SIGNAL_TYPES else "unknown"
+
+
+def normalize_novelty_level(value: Any) -> str:
+    novelty = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "duplicate": "none",
+        "duplicated": "none",
+        "low_value": "none",
+        "no_value": "none",
+        "no": "none",
+    }
+    novelty = aliases.get(novelty, novelty)
+    return novelty if novelty in NOVELTY_LEVELS else "low"
+
+
+def normalize_evidence_strength(value: Any) -> str:
+    strength = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "single": "single_source",
+        "one_source": "single_source",
+        "multi": "multi_source",
+        "multiple": "multi_source",
+        "primary": "official",
+    }
+    strength = aliases.get(strength, strength)
+    return strength if strength in EVIDENCE_STRENGTHS else "unknown"
+
+
+def normalize_memory_action(value: Any) -> str:
+    action = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "create": "write",
+        "update": "write",
+        "create_or_update": "write",
+        "append": "write",
+        "keep": "write",
+        "ignore": "skip",
+        "ignored": "skip",
+        "no_op": "skip",
+        "noop": "skip",
+        "rejected": "reject",
+    }
+    action = aliases.get(action, action)
+    return action if action in MEMORY_ACTIONS else "write"
+
+
+def normalize_alert_level(value: Any) -> str:
+    level = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "low": "watch",
+        "medium": "important",
+        "high": "urgent",
+    }
+    level = aliases.get(level, level)
+    return level if level in ALERT_LEVELS else "none"
+
+
+def coerce_float_or_none(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, min(1.0, number))
+
+
+def coerce_non_negative_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0, number)
+
+
+def signal_field(update: dict[str, Any], key: str) -> Any:
+    signal_evaluation = update.get("signal_evaluation")
+    if isinstance(signal_evaluation, dict) and key in signal_evaluation:
+        return signal_evaluation.get(key)
+    return update.get(key)
+
+
+def build_signal_evaluation(update: dict[str, Any]) -> dict[str, Any]:
+    evidence_count = (
+        coerce_non_negative_int(signal_field(update, "evidence_count"))
+        or len(coerce_string_list(update.get("evidence_item_ids")))
+    )
+    source_count = (
+        coerce_non_negative_int(signal_field(update, "source_count"))
+        or len(coerce_string_list(update.get("source_ids")))
+    )
+    raw_evidence_strength = signal_field(update, "evidence_strength")
+    evidence_strength = normalize_evidence_strength(raw_evidence_strength)
+    if evidence_strength == "unknown":
+        if source_count > 1 or evidence_count > 1:
+            evidence_strength = "multi_source"
+        elif source_count == 1 or evidence_count == 1:
+            evidence_strength = "single_source"
+        else:
+            evidence_strength = "weak"
+
+    return {
+        "signal_type": normalize_signal_type(signal_field(update, "signal_type")),
+        "novelty_level": normalize_novelty_level(
+            signal_field(update, "novelty_level") or update.get("novelty")
+        ),
+        "evidence_strength": evidence_strength,
+        "memory_action": normalize_memory_action(
+            signal_field(update, "memory_action")
+            or update.get("action")
+            or update.get("timeline_action")
+        ),
+        "alert_level": normalize_alert_level(signal_field(update, "alert_level")),
+        "confidence": coerce_float_or_none(
+            signal_field(update, "confidence") or update.get("confidence")
+        ),
+        "evidence_count": evidence_count,
+        "source_count": source_count,
+    }
+
+
+def is_valuable_signal(signal_evaluation: dict[str, Any]) -> bool:
+    return (
+        signal_evaluation.get("memory_action") in {"write", "merge", "supersede"}
+        and signal_evaluation.get("signal_type") not in SKIP_SIGNAL_TYPES
+        and signal_evaluation.get("novelty_level") in {"high", "medium"}
+    )
+
+
 def should_skip_structured_memory_update(update: dict[str, Any]) -> bool:
     action = clean_text(update.get("action") or update.get("timeline_action")).lower()
     novelty = clean_text(update.get("novelty")).lower()
     status = normalize_verification_status(update.get("verification_status"))
+    signal_evaluation = build_signal_evaluation(update)
     return (
         action in SKIP_MEMORY_ACTIONS
         or novelty in SKIP_NOVELTY_VALUES
         or status == "rejected"
+        or signal_evaluation["memory_action"] in {"skip", "reject"}
+        or signal_evaluation["novelty_level"] == "none"
+        or signal_evaluation["signal_type"] in SKIP_SIGNAL_TYPES
     )
 
 
@@ -908,8 +1080,11 @@ class FileMemoryStore:
             coerce_string_list(existing.get("source_ids"))
             + coerce_string_list(update.get("source_ids"))
         )
+        signal_evaluation = build_signal_evaluation(update)
+        cluster_id = clean_text(update.get("cluster_id"))
         claims[claim_id] = {
             "claim_id": claim_id,
+            "cluster_id": cluster_id,
             "claim": claim,
             "claim_type": clean_text(update.get("claim_type")) or "signal",
             "verification_status": normalize_verification_status(
@@ -918,6 +1093,7 @@ class FileMemoryStore:
             "confidence": update.get("confidence"),
             "materiality": clean_text(update.get("materiality")),
             "novelty": clean_text(update.get("novelty")),
+            "signal_evaluation": signal_evaluation,
             "why_it_matters": clean_text(update.get("why_it_matters")),
             "evidence_item_ids": evidence_item_ids,
             "source_ids": source_ids,
@@ -941,6 +1117,24 @@ class FileMemoryStore:
                 or entity_id,
                 "aliases": aliases,
                 "updated_at": seen_at,
+                "last_valuable_at": (
+                    seen_at
+                    if is_valuable_signal(signal_evaluation)
+                    else payload.get("last_valuable_at")
+                ),
+                "status": (
+                    "superseded"
+                    if signal_evaluation["memory_action"] == "supersede"
+                    else clean_text(update.get("status"))
+                    or payload.get("status")
+                    or "active"
+                ),
+                "decay_score": (
+                    coerce_float_or_none(update.get("decay_score"))
+                    if update.get("decay_score") is not None
+                    else payload.get("decay_score")
+                ),
+                "latest_signal_evaluation": signal_evaluation,
                 "claims": claims,
                 "recent_claim_ids": recent_claim_ids,
                 "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
@@ -1002,12 +1196,16 @@ class FileMemoryStore:
             + coerce_string_list(update.get("source_ids"))
         )
         status = normalize_verification_status(update.get("verification_status"))
+        signal_evaluation = build_signal_evaluation(update)
+        cluster_id = clean_text(update.get("cluster_id"))
         claims[claim_id] = {
             "claim_id": claim_id,
+            "cluster_id": cluster_id,
             "claim": claim,
             "verification_status": status,
             "confidence": update.get("confidence"),
             "importance": clean_text(update.get("importance")),
+            "signal_evaluation": signal_evaluation,
             "evidence_item_ids": evidence_item_ids,
             "source_ids": source_ids,
             "first_seen": existing.get("first_seen") or seen_at,
@@ -1023,9 +1221,11 @@ class FileMemoryStore:
             {
                 "time": clean_text(update.get("timestamp")) or seen_at,
                 "claim_id": claim_id,
+                "cluster_id": cluster_id,
                 "claim": claim,
                 "verification_status": status,
                 "importance": clean_text(update.get("importance")),
+                "signal_evaluation": signal_evaluation,
                 "evidence_item_ids": evidence_item_ids,
                 "source_ids": source_ids,
             }
@@ -1036,6 +1236,24 @@ class FileMemoryStore:
                 "event_id": event_id,
                 "title": clean_text(update.get("title")) or payload.get("title") or event_id,
                 "updated_at": seen_at,
+                "last_valuable_at": (
+                    seen_at
+                    if is_valuable_signal(signal_evaluation)
+                    else payload.get("last_valuable_at")
+                ),
+                "status": (
+                    "superseded"
+                    if signal_evaluation["memory_action"] == "supersede"
+                    else clean_text(update.get("status"))
+                    or payload.get("status")
+                    or "active"
+                ),
+                "decay_score": (
+                    coerce_float_or_none(update.get("decay_score"))
+                    if update.get("decay_score") is not None
+                    else payload.get("decay_score")
+                ),
+                "latest_signal_evaluation": signal_evaluation,
                 "timeline": timeline[-80:],
                 "claims": claims,
                 "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
@@ -1097,13 +1315,17 @@ class FileMemoryStore:
             + coerce_string_list(update.get("source_ids"))
         )
         status = normalize_verification_status(update.get("verification_status"))
+        signal_evaluation = build_signal_evaluation(update)
+        cluster_id = clean_text(update.get("cluster_id"))
         claims[claim_id] = {
             "claim_id": claim_id,
+            "cluster_id": cluster_id,
             "claim": claim,
             "verification_status": status,
             "confidence": update.get("confidence"),
             "time_horizon": clean_text(update.get("time_horizon")),
             "materiality": clean_text(update.get("materiality")),
+            "signal_evaluation": signal_evaluation,
             "evidence_item_ids": evidence_item_ids,
             "source_ids": source_ids,
             "first_seen": existing.get("first_seen") or seen_at,
@@ -1119,10 +1341,12 @@ class FileMemoryStore:
             {
                 "time": clean_text(update.get("timestamp")) or seen_at,
                 "claim_id": claim_id,
+                "cluster_id": cluster_id,
                 "claim": claim,
                 "verification_status": status,
                 "time_horizon": clean_text(update.get("time_horizon")),
                 "materiality": clean_text(update.get("materiality")),
+                "signal_evaluation": signal_evaluation,
                 "evidence_item_ids": evidence_item_ids,
                 "source_ids": source_ids,
             }
@@ -1133,6 +1357,24 @@ class FileMemoryStore:
                 "macro_id": macro_id,
                 "topic": clean_text(update.get("topic")) or payload.get("topic") or macro_id,
                 "updated_at": seen_at,
+                "last_valuable_at": (
+                    seen_at
+                    if is_valuable_signal(signal_evaluation)
+                    else payload.get("last_valuable_at")
+                ),
+                "status": (
+                    "superseded"
+                    if signal_evaluation["memory_action"] == "supersede"
+                    else clean_text(update.get("status"))
+                    or payload.get("status")
+                    or "active"
+                ),
+                "decay_score": (
+                    coerce_float_or_none(update.get("decay_score"))
+                    if update.get("decay_score") is not None
+                    else payload.get("decay_score")
+                ),
+                "latest_signal_evaluation": signal_evaluation,
                 "observations": observations[-80:],
                 "claims": claims,
                 "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
@@ -1172,6 +1414,7 @@ class FileMemoryStore:
                 "updated_at": seen_at,
                 "latest_assessment": "",
                 "assessment_history": [],
+                "topic_strength": {},
                 "applied_update_ids": [],
                 "last_update_id": None,
             },
@@ -1182,7 +1425,15 @@ class FileMemoryStore:
         if entry_update_id in applied_update_ids:
             return False
 
+        source_profile = update.get("source_profile")
+        if not isinstance(source_profile, dict):
+            source_profile = {}
+
+        def profile_field(key: str) -> Any:
+            return source_profile.get(key) if key in source_profile else update.get(key)
+
         assessment = clean_text(update.get("assessment") or update.get("note"))
+        signal_evaluation = build_signal_evaluation(update)
         history = payload.get("assessment_history", [])
         if not isinstance(history, list):
             history = []
@@ -1195,21 +1446,35 @@ class FileMemoryStore:
                     "requires_confirmation": clean_text(
                         update.get("requires_confirmation")
                     ),
+                    "confirmation_required": clean_text(
+                        profile_field("confirmation_required")
+                    ),
                     "bias_tags": coerce_string_list(update.get("bias_tags")),
+                    "signal_evaluation": signal_evaluation,
                 }
             )
+
+        topic_strength = payload.get("topic_strength", {})
+        if not isinstance(topic_strength, dict):
+            topic_strength = {}
+        topic_strength.update(coerce_number_mapping(profile_field("topic_strength")))
+        last_valuable_at = clean_text(profile_field("last_valuable_at"))
+        if not last_valuable_at and is_valuable_signal(signal_evaluation):
+            last_valuable_at = seen_at
 
         payload.update(
             {
                 "schema_version": "source-memory/v1",
                 "source_id": source_id,
-                "source_type": clean_text(update.get("source_type"))
+                "source_type": clean_text(profile_field("source_type"))
                 or payload.get("source_type")
                 or "unknown",
                 "display_name": clean_text(update.get("display_name"))
                 or payload.get("display_name")
                 or source_id,
                 "updated_at": seen_at,
+                "last_valuable_at": last_valuable_at
+                or payload.get("last_valuable_at"),
                 "latest_assessment": assessment or payload.get("latest_assessment", ""),
                 "credibility": clean_text(update.get("credibility"))
                 or payload.get("credibility", ""),
@@ -1217,10 +1482,28 @@ class FileMemoryStore:
                     update.get("requires_confirmation")
                 )
                 or payload.get("requires_confirmation", ""),
+                "confirmation_required": clean_text(
+                    profile_field("confirmation_required")
+                )
+                or payload.get("confirmation_required", ""),
+                "repeat_tendency": clean_text(profile_field("repeat_tendency"))
+                or payload.get("repeat_tendency", ""),
+                "hit_rate": (
+                    coerce_float_or_none(profile_field("hit_rate"))
+                    if profile_field("hit_rate") is not None
+                    else payload.get("hit_rate")
+                ),
+                "repeat_rate": (
+                    coerce_float_or_none(profile_field("repeat_rate"))
+                    if profile_field("repeat_rate") is not None
+                    else payload.get("repeat_rate")
+                ),
+                "topic_strength": topic_strength,
                 "bias_tags": unique_preserving_order(
                     coerce_string_list(payload.get("bias_tags"))
                     + coerce_string_list(update.get("bias_tags"))
                 ),
+                "latest_signal_evaluation": signal_evaluation,
                 "assessment_history": history[-20:],
                 "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
                 "last_update_id": update_id,
@@ -1390,8 +1673,11 @@ class FileMemoryStore:
             entities[entity_id] = {
                 "file": str(path.relative_to(self.root)),
                 "updated_at": payload.get("updated_at"),
+                "last_valuable_at": payload.get("last_valuable_at"),
+                "status": payload.get("status"),
                 "entity_type": payload.get("entity_type"),
                 "display_name": payload.get("display_name"),
+                "latest_signal_evaluation": payload.get("latest_signal_evaluation"),
                 "claim_count": len(payload.get("claims", {}))
                 if isinstance(payload.get("claims"), dict)
                 else 0,
@@ -1407,7 +1693,10 @@ class FileMemoryStore:
             events[event_id] = {
                 "file": str(path.relative_to(self.root)),
                 "updated_at": payload.get("updated_at"),
+                "last_valuable_at": payload.get("last_valuable_at"),
+                "status": payload.get("status"),
                 "title": payload.get("title"),
+                "latest_signal_evaluation": payload.get("latest_signal_evaluation"),
                 "timeline_count": len(timeline) if isinstance(timeline, list) else 0,
             }
 
@@ -1421,7 +1710,10 @@ class FileMemoryStore:
             macro[macro_id] = {
                 "file": str(path.relative_to(self.root)),
                 "updated_at": payload.get("updated_at"),
+                "last_valuable_at": payload.get("last_valuable_at"),
+                "status": payload.get("status"),
                 "topic": payload.get("topic"),
+                "latest_signal_evaluation": payload.get("latest_signal_evaluation"),
                 "observation_count": (
                     len(observations) if isinstance(observations, list) else 0
                 ),
@@ -1436,9 +1728,12 @@ class FileMemoryStore:
             sources[source_id] = {
                 "file": str(path.relative_to(self.root)),
                 "updated_at": payload.get("updated_at"),
+                "last_valuable_at": payload.get("last_valuable_at"),
                 "source_type": payload.get("source_type"),
                 "credibility": payload.get("credibility"),
                 "requires_confirmation": payload.get("requires_confirmation"),
+                "confirmation_required": payload.get("confirmation_required"),
+                "repeat_tendency": payload.get("repeat_tendency"),
             }
 
         index_payload = {
@@ -2211,6 +2506,104 @@ def build_llm_prompt(
             f"  {', '.join(predefined_themes)}\n"
         )
 
+    memory_update_example = """### MEMORY_UPDATE
+```json
+{
+  "primary_themes": ["个股/公司", "地缘政治"],
+  "secondary_themes": {
+    "个股/公司": ["A股标的", "液冷/温控"],
+    "地缘政治": ["伊朗", "霍尔木兹海峡"]
+  },
+  "account_notes": {
+    "example_user": "经常发布半导体和AI基础设施链条观点，需要结合公告和新闻交叉确认。"
+  },
+  "signal_evaluations": [
+    {
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "summary": "多条内容讨论液冷温控链条，但核心增量仍需验证。",
+      "signal_type": "new_angle",
+      "novelty_level": "medium",
+      "evidence_strength": "single_source",
+      "memory_action": "write",
+      "alert_level": "watch",
+      "confidence": 0.55,
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"]
+    }
+  ],
+  "entity_updates": [
+    {
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "entity_id": "cn_equity:英维克",
+      "entity_type": "equity",
+      "display_name": "英维克",
+      "claim": "市场讨论其液冷/温控业务可能受益于算力基础设施扩张。",
+      "claim_type": "thesis",
+      "verification_status": "plausible",
+      "materiality": "medium",
+      "signal_evaluation": {
+        "signal_type": "new_angle",
+        "novelty_level": "medium",
+        "evidence_strength": "single_source",
+        "memory_action": "write",
+        "alert_level": "watch",
+        "confidence": 0.6,
+        "evidence_count": 1,
+        "source_count": 1
+      },
+      "why_it_matters": "影响市场对公司收入弹性和估值的预期。",
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"]
+    }
+  ],
+  "event_updates": [
+    {
+      "cluster_id": "xcluster:hormuz-20260428",
+      "event_id": "geopolitics:iran-hormuz",
+      "title": "伊朗-霍尔木兹海峡局势",
+      "timestamp": "2026-04-14T10:00:00Z",
+      "claim": "社交媒体开始交易海峡航运受阻风险，可能影响原油和航运资产预期。",
+      "verification_status": "unverified",
+      "importance": "high",
+      "signal_evaluation": {
+        "signal_type": "new_fact",
+        "novelty_level": "high",
+        "evidence_strength": "single_source",
+        "memory_action": "write",
+        "alert_level": "important",
+        "confidence": 0.4
+      },
+      "evidence_item_ids": ["x:456"],
+      "source_ids": ["x:example_user"]
+    }
+  ],
+  "macro_updates": [],
+  "source_assessments": [
+    {
+      "source_id": "x:example_user",
+      "source_type": "commentary",
+      "assessment": "对AI基础设施链条有持续观点输出，但需要公告和新闻交叉确认。",
+      "source_profile": {
+        "topic_strength": {"个股/公司": 0.7},
+        "repeat_tendency": "medium",
+        "confirmation_required": "high"
+      }
+    }
+  ],
+  "alert_candidates": [
+    {
+      "title": "液冷链条讨论出现中等新增角度",
+      "reason": "相对既有记忆，新增关注温控业务弹性，但证据仍是单一社交来源。",
+      "alert_level": "watch",
+      "related_entity_ids": ["cn_equity:英维克"],
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"]
+    }
+  ]
+}
+```
+"""
+
     return f"""你是一个偏金融与地缘风险的社交信号分析助手。
 
 ## 任务
@@ -2237,52 +2630,7 @@ def build_llm_prompt(
 - 推荐关注的新账号及理由
 
 ## MEMORY_UPDATE 格式
-### MEMORY_UPDATE
-```json
-{
-  "primary_themes": ["个股/公司", "地缘政治"],
-  "secondary_themes": {
-    "个股/公司": ["A股标的", "液冷/温控"],
-    "地缘政治": ["伊朗", "霍尔木兹海峡"]
-  },
-  "account_notes": {
-    "example_user": "经常发布半导体和AI基础设施链条观点，需要结合公告和新闻交叉确认。"
-  },
-  "entity_updates": [
-    {
-      "entity_id": "cn_equity:英维克",
-      "entity_type": "equity",
-      "display_name": "英维克",
-      "claim": "市场讨论其液冷/温控业务可能受益于算力基础设施扩张。",
-      "claim_type": "thesis",
-      "verification_status": "plausible",
-      "confidence": 0.6,
-      "novelty": "high",
-      "materiality": "medium",
-      "why_it_matters": "影响市场对公司收入弹性和估值的预期。",
-      "evidence_item_ids": ["x:123"],
-      "source_ids": ["x:example_user"],
-      "action": "create_or_update"
-    }
-  ],
-  "event_updates": [
-    {
-      "event_id": "geopolitics:iran-hormuz",
-      "title": "伊朗-霍尔木兹海峡局势",
-      "timestamp": "2026-04-14T10:00:00Z",
-      "claim": "社交媒体开始交易海峡航运受阻风险，可能影响原油和航运资产预期。",
-      "verification_status": "unverified",
-      "confidence": 0.4,
-      "importance": "high",
-      "evidence_item_ids": ["x:456"],
-      "source_ids": ["x:example_user"],
-      "timeline_action": "append"
-    }
-  ],
-  "macro_updates": [],
-  "source_assessments": []
-}
-```
+{memory_update_example}
 
 ## 规则
 1. 同一一级主题下合并不同账号的相关推文
@@ -2298,11 +2646,15 @@ def build_llm_prompt(
 11. 单一社交媒体来源通常只能标为 `unverified` 或 `plausible`；只有多源或官方信息支持时才标为 `confirmed`
 12. `verification_status` 只能使用 `unverified`、`plausible`、`confirmed`、`superseded`、`rejected`
 13. `claim_type` 可使用 `fact`、`thesis`、`rumor`、`signal`；观点和推演不要写成事实
-14. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
-15. `event_updates` 用于会随时间发展的事件，按时间线追加
-16. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
-17. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度
-18. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
+14. 每个重要 claim 都应尽量带 `signal_evaluation`：`signal_type` 用 `new_fact`、`new_angle`、`repeat`、`noise`；`novelty_level` 用 `high`、`medium`、`low`、`none`；`evidence_strength` 用 `weak`、`single_source`、`multi_source`、`official`
+15. `memory_action` 用 `write`、`merge`、`skip`、`supersede`、`reject`；重复、噪音或无新增价值的信息应该使用 `skip` 或不进入结构化更新
+16. 同一事件簇可以共用 `cluster_id`，格式建议为 `xcluster:<主题>-<日期>`；没有把握时可以省略
+17. `alert_candidates` 只表示候选告警，不等于一定发送；只有 `watch`、`important`、`urgent` 才值得写入
+18. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
+19. `event_updates` 用于会随时间发展的事件，按时间线追加
+20. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
+21. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度，可带 `source_profile.topic_strength`、`repeat_tendency`、`confirmation_required`
+22. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
 {theme_hint}
 ## 历史上下文
 {history_context if history_context else "（首次运行，无历史数据）"}
@@ -2355,10 +2707,12 @@ def empty_memory_update() -> dict[str, Any]:
         "primary_themes": [],
         "secondary_themes": {},
         "account_notes": {},
+        "signal_evaluations": [],
         "entity_updates": [],
         "event_updates": [],
         "macro_updates": [],
         "source_assessments": [],
+        "alert_candidates": [],
     }
 
 
@@ -2398,6 +2752,52 @@ def coerce_dict_list(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def coerce_number_mapping(value: Any) -> dict[str, float]:
+    if not isinstance(value, dict):
+        return {}
+    normalized: dict[str, float] = {}
+    for key, raw_number in value.items():
+        name = clean_text(key)
+        number = coerce_float_or_none(raw_number)
+        if name and number is not None:
+            normalized[name] = number
+    return normalized
+
+
+def coerce_signal_evaluations(value: Any) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in coerce_dict_list(value):
+        payload = dict(item)
+        payload["signal_evaluation"] = build_signal_evaluation(payload)
+        if payload.get("cluster_id") is not None:
+            payload["cluster_id"] = clean_text(payload.get("cluster_id"))
+        normalized.append(payload)
+    return normalized
+
+
+def coerce_alert_candidates(value: Any) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in coerce_dict_list(value):
+        payload = dict(item)
+        payload["title"] = clean_text(payload.get("title"))
+        payload["reason"] = clean_text(payload.get("reason"))
+        payload["alert_level"] = normalize_alert_level(payload.get("alert_level"))
+        payload["signal_evaluation"] = build_signal_evaluation(payload)
+        payload["related_entity_ids"] = coerce_string_list(
+            payload.get("related_entity_ids")
+        )
+        payload["related_event_ids"] = coerce_string_list(
+            payload.get("related_event_ids")
+        )
+        payload["evidence_item_ids"] = coerce_string_list(
+            payload.get("evidence_item_ids")
+        )
+        payload["source_ids"] = coerce_string_list(payload.get("source_ids"))
+        if payload["title"] or payload["reason"]:
+            normalized.append(payload)
+    return normalized
 
 
 def extract_memory_update_object(summary_text: str) -> dict[str, Any] | None:
@@ -2551,20 +2951,28 @@ def parse_memory_update(summary_text: str) -> dict[str, Any]:
             payload.get("secondary_themes")
         )
         parsed["account_notes"] = coerce_account_notes(payload.get("account_notes"))
+        parsed["signal_evaluations"] = coerce_signal_evaluations(
+            payload.get("signal_evaluations")
+        )
         parsed["entity_updates"] = coerce_dict_list(payload.get("entity_updates"))
         parsed["event_updates"] = coerce_dict_list(payload.get("event_updates"))
         parsed["macro_updates"] = coerce_dict_list(payload.get("macro_updates"))
         parsed["source_assessments"] = coerce_dict_list(
             payload.get("source_assessments")
         )
+        parsed["alert_candidates"] = coerce_alert_candidates(
+            payload.get("alert_candidates")
+        )
         if (
             parsed["primary_themes"]
             or parsed["secondary_themes"]
             or parsed["account_notes"]
+            or parsed["signal_evaluations"]
             or parsed["entity_updates"]
             or parsed["event_updates"]
             or parsed["macro_updates"]
             or parsed["source_assessments"]
+            or parsed["alert_candidates"]
         ):
             return parsed
 
@@ -2847,10 +3255,12 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         not parsed["primary_themes"]
         and not parsed["secondary_themes"]
         and not parsed["account_notes"]
+        and not parsed["signal_evaluations"]
         and not parsed["entity_updates"]
         and not parsed["event_updates"]
         and not parsed["macro_updates"]
         and not parsed["source_assessments"]
+        and not parsed["alert_candidates"]
     ):
         print("未在 summary 中找到可解析的 MEMORY_UPDATE")
         return 1
@@ -3003,10 +3413,13 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "primary_themes": normalized_primary,
         "secondary_themes": normalized_secondary_mapping,
         "account_notes": parsed["account_notes"],
+        "signal_evaluations": parsed["signal_evaluations"],
         "entity_updates": parsed["entity_updates"],
         "event_updates": parsed["event_updates"],
         "macro_updates": parsed["macro_updates"],
         "source_assessments": parsed["source_assessments"],
+        "alert_candidates": parsed["alert_candidates"],
+        "alert_candidate_count": len(parsed["alert_candidates"]),
         "memory_dir": config["memory_dir"],
         "memory_backend": config["memory_backend"],
         "memory_index": str(memory_store.index_path),

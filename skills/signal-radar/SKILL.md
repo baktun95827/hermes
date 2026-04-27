@@ -128,10 +128,12 @@ Generate a Chinese brief from that prompt with this output discipline:
 - Use `primary_themes` for stable一级主题
 - Use `secondary_themes` to map each一级主题 to more specific二级主题
 - Use `account_notes` with usernames as keys and no leading `@`
+- Use `signal_evaluations` and per-claim `signal_evaluation` to decide whether a signal is new, repeated, noise, worth writing, or worth alerting
 - Use `entity_updates` for stocks, companies, sectors, and supply-chain objects
 - Use `event_updates` for time-evolving events such as Iran/Hormuz
 - Use `macro_updates` for macro environment, liquidity, energy, and commodity trends
 - Use `source_assessments` for agent-maintained source notes
+- Use `alert_candidates` for content alerts; the digest layer decides whether to send them
 - Send only the content before `### MEMORY_UPDATE` to Telegram
 
 Expected `MEMORY_UPDATE` shape:
@@ -146,25 +148,46 @@ Expected `MEMORY_UPDATE` shape:
   "account_notes": {
     "example_user": "经常发布半导体和AI基础设施链条观点，需要结合公告和新闻交叉确认。"
   },
+  "signal_evaluations": [
+    {
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "summary": "液冷温控链条讨论出现中等新增角度，但仍是单一社交来源。",
+      "signal_type": "new_angle",
+      "novelty_level": "medium",
+      "evidence_strength": "single_source",
+      "memory_action": "write",
+      "alert_level": "watch",
+      "confidence": 0.55,
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"]
+    }
+  ],
   "entity_updates": [
     {
+      "cluster_id": "xcluster:liquid-cooling-20260428",
       "entity_id": "cn_equity:英维克",
       "entity_type": "equity",
       "display_name": "英维克",
       "claim": "市场讨论其液冷/温控业务可能受益于算力基础设施扩张。",
       "claim_type": "thesis",
       "verification_status": "plausible",
-      "confidence": 0.6,
-      "novelty": "high",
       "materiality": "medium",
+      "signal_evaluation": {
+        "signal_type": "new_angle",
+        "novelty_level": "medium",
+        "evidence_strength": "single_source",
+        "memory_action": "write",
+        "alert_level": "watch",
+        "confidence": 0.6
+      },
       "evidence_item_ids": ["x:123"],
-      "source_ids": ["x:example_user"],
-      "action": "create_or_update"
+      "source_ids": ["x:example_user"]
     }
   ],
   "event_updates": [],
   "macro_updates": [],
-  "source_assessments": []
+  "source_assessments": [],
+  "alert_candidates": []
 }
 ```
 
@@ -199,7 +222,9 @@ Behavior notes:
 
 - `apply-memory` is idempotent for the same summary input; rerunning it does not inflate theme counts
 - 一级主题和二级主题都会先经过 alias 归一化再写入 memory
-- structured updates with `verification_status: rejected`, explicit skip actions, or duplicate/low-value novelty are ignored
+- structured updates with `verification_status: rejected`, explicit skip actions, `signal_type: noise`, `memory_action: skip|reject`, or no novelty are ignored
+- accepted claim updates store `cluster_id`, `signal_evaluation`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend
+- `alert_candidates` are recorded in `memory_update_*.json`; sending them is a downstream digest/alert decision
 - `latest --field memory_backend` returns the active memory backend; currently this should be `file`
 - `latest --field state` returns the synced state file path
 - when reading `memory/state.json`, prefer `updated_at` for the latest successful write time; `last_run` is kept for compatibility with older state consumers

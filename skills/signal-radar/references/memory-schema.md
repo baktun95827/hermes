@@ -37,10 +37,35 @@ Accepted `claim_type` values:
 
 New keys:
 
+- `signal_evaluations`: run-level or cluster-level value judgments, including skipped signals
 - `entity_updates`: stocks, companies, sectors, supply-chain objects
 - `event_updates`: time-evolving events such as Iran/Hormuz or wars
 - `macro_updates`: macro environment, liquidity, rates, energy, commodities
 - `source_assessments`: agent-maintained source notes
+- `alert_candidates`: possible content alerts for the digest layer to decide on
+
+`signal_evaluation` is the shared value-judgment shape. It may appear inside `signal_evaluations`, claim updates, and alert candidates:
+
+```json
+{
+  "signal_type": "new_fact",
+  "novelty_level": "high",
+  "evidence_strength": "single_source",
+  "memory_action": "write",
+  "alert_level": "important",
+  "confidence": 0.6,
+  "evidence_count": 1,
+  "source_count": 1
+}
+```
+
+Accepted values:
+
+- `signal_type`: `new_fact`, `new_angle`, `repeat`, `noise`
+- `novelty_level`: `high`, `medium`, `low`, `none`
+- `evidence_strength`: `weak`, `single_source`, `multi_source`, `official`
+- `memory_action`: `write`, `merge`, `skip`, `supersede`, `reject`
+- `alert_level`: `none`, `watch`, `important`, `urgent`
 
 Example:
 
@@ -54,39 +79,87 @@ Example:
   "account_notes": {
     "example_user": "经常发布半导体和AI基础设施链条观点，需要交叉确认。"
   },
+  "signal_evaluations": [
+    {
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "summary": "液冷温控链条讨论出现中等新增角度，但仍是单一社交来源。",
+      "signal_type": "new_angle",
+      "novelty_level": "medium",
+      "evidence_strength": "single_source",
+      "memory_action": "write",
+      "alert_level": "watch",
+      "confidence": 0.55,
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"]
+    }
+  ],
   "entity_updates": [
     {
+      "cluster_id": "xcluster:liquid-cooling-20260428",
       "entity_id": "cn_equity:英维克",
       "entity_type": "equity",
       "display_name": "英维克",
       "claim": "市场讨论其液冷/温控业务可能受益于算力基础设施扩张。",
       "claim_type": "thesis",
       "verification_status": "plausible",
-      "confidence": 0.6,
-      "novelty": "high",
       "materiality": "medium",
+      "signal_evaluation": {
+        "signal_type": "new_angle",
+        "novelty_level": "medium",
+        "evidence_strength": "single_source",
+        "memory_action": "write",
+        "alert_level": "watch",
+        "confidence": 0.6
+      },
       "why_it_matters": "影响市场对公司收入弹性和估值的预期。",
       "evidence_item_ids": ["x:123"],
-      "source_ids": ["x:example_user"],
-      "action": "create_or_update"
+      "source_ids": ["x:example_user"]
     }
   ],
   "event_updates": [
     {
+      "cluster_id": "xcluster:hormuz-20260428",
       "event_id": "geopolitics:iran-hormuz",
       "title": "伊朗-霍尔木兹海峡局势",
       "timestamp": "2026-04-14T10:00:00Z",
       "claim": "市场开始交易海峡航运受阻风险，可能影响原油和航运资产预期。",
       "verification_status": "unverified",
-      "confidence": 0.4,
       "importance": "high",
+      "signal_evaluation": {
+        "signal_type": "new_fact",
+        "novelty_level": "high",
+        "evidence_strength": "single_source",
+        "memory_action": "write",
+        "alert_level": "important",
+        "confidence": 0.4
+      },
       "evidence_item_ids": ["x:456"],
-      "source_ids": ["x:example_user"],
-      "timeline_action": "append"
+      "source_ids": ["x:example_user"]
     }
   ],
   "macro_updates": [],
-  "source_assessments": []
+  "source_assessments": [
+    {
+      "source_id": "x:example_user",
+      "source_type": "commentary",
+      "assessment": "对AI基础设施链条有持续观点输出，但需要公告和新闻交叉确认。",
+      "source_profile": {
+        "topic_strength": {"个股/公司": 0.7},
+        "repeat_tendency": "medium",
+        "confirmation_required": "high"
+      }
+    }
+  ],
+  "alert_candidates": [
+    {
+      "title": "液冷链条讨论出现中等新增角度",
+      "reason": "相对既有记忆，新增关注温控业务弹性，但证据仍是单一社交来源。",
+      "alert_level": "watch",
+      "related_entity_ids": ["cn_equity:英维克"],
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"]
+    }
+  ]
 }
 ```
 
@@ -120,8 +193,13 @@ When using `memory_backend: file`, committed long-run memory lives under `memory
 - `verification_status` is `rejected`
 - `action` is `ignore`, `reject`, `skip`, or `no_op`
 - `novelty` says the update is duplicate or low value
+- `signal_evaluation.memory_action` is `skip` or `reject`
+- `signal_evaluation.signal_type` is `noise`
+- `signal_evaluation.novelty_level` is `none`
 
 For accepted updates, `apply-memory` derives a stable `claim_id` when the analyzer does not provide one. This gives idempotent writes and prevents one summary retry from inflating memory.
+
+Accepted claim updates store `cluster_id`, `signal_evaluation`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend. These fields are the first layer of memory pollution control; they do not yet implement automatic decay.
 
 ## Human vs Agent Ownership
 

@@ -266,10 +266,12 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
   "account_notes": {
     "elonmusk": "近期主要讨论政府效率、AI 和航天。"
   },
+  "signal_evaluations": [],
   "entity_updates": [],
   "event_updates": [],
   "macro_updates": [],
-  "source_assessments": []
+  "source_assessments": [],
+  "alert_candidates": []
 }
 ```
 
@@ -278,10 +280,12 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `primary_themes`：稳定的一级主题
 - `secondary_themes`：每个一级主题下的二级主题
 - `account_notes`：账号画像，key 使用不带 `@` 的用户名
+- `signal_evaluations`：run 级或事件簇级价值判断，可记录新事实、新角度、复读或噪音
 - `entity_updates`：股票、公司、行业链条等对象的 claim 记忆
 - `event_updates`：持续事件的时间线记忆，例如伊朗、霍尔木兹海峡
 - `macro_updates`：宏观环境、流动性、能源和大宗商品趋势
 - `source_assessments`：agent 根据历史观察维护的来源评价
+- `alert_candidates`：候选内容告警，只记录候选，不代表一定发送
 
 解析器仍保留向后兼容：
 
@@ -289,6 +293,16 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - 如果 JSON 不合法或不存在，再回退解析旧的半结构化文本格式
 
 这意味着历史 summary 仍可回放，但新流程的目标协议已经完全转向 JSON。
+
+`signal_evaluation` 是当前新增的价值判断核心，既可以出现在 `signal_evaluations`，也可以嵌入 `entity_updates`、`event_updates`、`macro_updates` 和 `alert_candidates`。核心字段包括：
+
+- `signal_type`: `new_fact`、`new_angle`、`repeat`、`noise`
+- `novelty_level`: `high`、`medium`、`low`、`none`
+- `evidence_strength`: `weak`、`single_source`、`multi_source`、`official`
+- `memory_action`: `write`、`merge`、`skip`、`supersede`、`reject`
+- `alert_level`: `none`、`watch`、`important`、`urgent`
+
+`apply-memory` 会跳过 `signal_type: noise`、`novelty_level: none`、`memory_action: skip|reject` 或 `verification_status: rejected` 的结构化 claim。被接受的 claim 会在文件 backend 中保存 `cluster_id`、`signal_evaluation`、`last_valuable_at`、`status` 和可选 `decay_score`，这是后续 memory 衰减和污染控制的基础。
 
 ### 5. 记忆结构、归一化与幂等
 
@@ -332,10 +346,13 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `primary_themes`
 - `secondary_themes`
 - `account_notes`
+- `signal_evaluations`
 - `entity_updates`
 - `event_updates`
 - `macro_updates`
 - `source_assessments`
+- `alert_candidates`
+- `alert_candidate_count`
 - `memory_backend`
 - `theme_updates`
 - `account_updates`
