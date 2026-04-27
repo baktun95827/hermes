@@ -200,7 +200,13 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `memory/state.json`
 - `memory/accounts/<username>.json`
 - `memory/themes/<primary-theme>.json`
+- `memory/entities/<entity-id>.json`
+- `memory/events/<event-id>.json`
+- `memory/macro/<macro-id>.json`
+- `memory/sources/<source-id>.json`
 - `memory/index.json`
+
+`accounts/` 和 `themes/` 保留原有账号画像与宽泛主题记忆。`entities/`、`events/`、`macro/` 和 `sources/` 用于金融/地缘场景下的 claim-driven memory，详细契约见 `references/memory-schema.md`。
 
 ### Git 同步边界
 
@@ -253,6 +259,10 @@ local store 的职责是“保存状态并暴露清晰契约”，不是“替�
   - `primary_themes`
   - `secondary_themes`
   - `account_notes`
+  - `entity_updates`
+  - `event_updates`
+  - `macro_updates`
+  - `source_assessments`
 
 ### 不应该负责什么
 
@@ -271,9 +281,15 @@ analyzer 至少应该回答这些问题：
 - 它们属于哪些一级主题
 - 各一级主题下应该记录哪些二级主题
 - 哪些账号画像需要更新
+- 哪些金融标的、公司、行业链条 claim 值得进入 `entity_updates`
+- 哪些持续事件需要按时间线进入 `event_updates`
+- 哪些宏观背景或趋势需要进入 `macro_updates`
+- 哪些来源可信度或确认要求需要更新到 `source_assessments`
 - 哪些内容值得进入最终 digest
 
 它不应该机械地把每条推文都重复一遍。
+
+对于社交媒体内容，analyzer 应该保守标注验证状态。单一来源通常只能是 `unverified` 或 `plausible`；只有官方或多源证据支持时，才应该输出 `confirmed`。
 
 ## 第 4 层：Digest / Alerts
 

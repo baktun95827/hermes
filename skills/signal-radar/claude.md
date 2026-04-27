@@ -39,6 +39,10 @@ collector -> local store -> analyzer -> digest / alerts
   - `memory/state.json`
   - `memory/accounts/*.json`
   - `memory/themes/*.json`
+  - `memory/entities/*.json`
+  - `memory/events/*.json`
+  - `memory/macro/*.json`
+  - `memory/sources/*.json`
   - `memory/index.json`
 - `analyzer`
   - Hermes / LLM 读取 `prompt_*.txt`
@@ -205,9 +209,9 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 - 运行状态和长期记忆解耦
 - `memory/` 可直接提交到 GitHub，换 VPS 后不会把旧推文重新当成“新推文”
 
-### 4. 主题归类与 MEMORY_UPDATE 协议
+### 4. 主题归类、claim 抽取与 MEMORY_UPDATE 协议
 
-Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重组多个账号的动态”。因此 `collect` 生成的 prompt 会要求模型输出 Telegram 正文，以及一个只供系统消费的 `MEMORY_UPDATE`。
+Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重组多个账号的动态”，并把有价值的金融/地缘 claim 写入可追溯记忆。因此 `collect` 生成的 prompt 会要求模型输出 Telegram 正文，以及一个只供系统消费的 `MEMORY_UPDATE`。
 
 现在的正式协议是严格 JSON。例如：
 
@@ -220,7 +224,11 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
   },
   "account_notes": {
     "elonmusk": "近期主要讨论政府效率、AI 和航天。"
-  }
+  },
+  "entity_updates": [],
+  "event_updates": [],
+  "macro_updates": [],
+  "source_assessments": []
 }
 ```
 
@@ -229,6 +237,10 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `primary_themes`：稳定的一级主题
 - `secondary_themes`：每个一级主题下的二级主题
 - `account_notes`：账号画像，key 使用不带 `@` 的用户名
+- `entity_updates`：股票、公司、行业链条等对象的 claim 记忆
+- `event_updates`：持续事件的时间线记忆，例如伊朗、霍尔木兹海峡
+- `macro_updates`：宏观环境、流动性、能源和大宗商品趋势
+- `source_assessments`：agent 根据历史观察维护的来源评价
 
 解析器仍保留向后兼容：
 
@@ -244,6 +256,10 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `memory/state.json`：去重和运行状态
 - `memory/accounts/<username>.json`：单账号记忆
 - `memory/themes/<primary-theme>.json`：单一级主题记忆
+- `memory/entities/<entity-id>.json`：标的、公司、行业链条记忆
+- `memory/events/<event-id>.json`：持续事件时间线
+- `memory/macro/<macro-id>.json`：宏观趋势记忆
+- `memory/sources/<source-id>.json`：来源评价记忆
 - `memory/index.json`：汇总索引
 
 当前记忆写入前会做两层归一化：
@@ -253,7 +269,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - 二级主题按一级主题分别归一化  
   例如在 `AI/人工智能` 下面，`AI policy`、`AI政策` 可归一到 `AI监管`
 
-幂等机制是当前实现的关键变化。`apply-memory` 会基于 summary 内容和 run 身份生成稳定 `update_id`，并把它写入账号文件和主题文件的：
+幂等机制是当前实现的关键变化。`apply-memory` 会基于 summary 内容和 run 身份生成稳定 `update_id`，并把它写入账号、主题和 claim-driven memory 文件的：
 
 - `applied_update_ids`
 - `last_update_id`
@@ -263,6 +279,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - 不会重复增加 `run_count`
 - 不会重复增加二级主题出现次数
 - 不会重复追加账号 note 历史
+- 不会因为同一份 summary 重试而重复追加同一个 claim
 
 这使得 Hermes 的定时任务在重试或补跑时更安全。
 
@@ -274,16 +291,24 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `primary_themes`
 - `secondary_themes`
 - `account_notes`
+- `entity_updates`
+- `event_updates`
+- `macro_updates`
+- `source_assessments`
 - `theme_updates`
 - `account_updates`
+- `entity_updates_applied`
+- `event_updates_applied`
+- `macro_updates_applied`
+- `source_updates_applied`
 - `already_applied`
 
 ### 6. 索引、锁与原子写
 
 当前实现已经不是“直接覆写 JSON 文件”的脆弱模式，而是补上了几层工程保护：
 
-- **索引文件：** `memory/index.json` 汇总所有账号和主题文件，供快速遍历和跨机同步后恢复
-- **索引版本：** 当前仓库初始化的 `memory/index.json` 是 `version: 2`
+- **索引文件：** `memory/index.json` 汇总所有账号、主题、标的、事件、宏观和来源文件，供快速遍历和跨机同步后恢复
+- **索引版本：** 当前仓库初始化的 `memory/index.json` 是 `version: 3`
 - **本地写锁：** `memory/.write.lock` 防止同一台机器上的并发任务同时写记忆
 - **原子写：** 关键 JSON/TXT 落盘通过“临时文件 + `os.replace`”完成，减少异常退出时的半截文件风险
 
@@ -355,7 +380,11 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 │   │   └── elonmusk.json   # 一个账号一个文件
 │   ├── themes/
 │   │   └── AI_人工智能.json  # 一个一级主题一个文件，内部含二级主题
-│   ├── index.json          # 账号/主题记忆总索引
+│   ├── entities/           # 一个标的/公司/行业链条一个文件
+│   ├── events/             # 一个持续事件一个时间线文件
+│   ├── macro/              # 一个宏观趋势一个文件
+│   ├── sources/            # 一个来源一个评价文件
+│   ├── index.json          # 记忆总索引
 │   └── .write.lock         # 本地并发写锁（运行时文件，不提交）
 ├── latest_run.json         # 最近一次运行的产物索引
 ├── SKILL.md                # Hermes skill 运行说明

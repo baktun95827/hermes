@@ -29,10 +29,11 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 - `collectors/registry.yaml`: multi-source collector registry; contract-first for future sources like Reddit or 雪球
 - `collectors/x/source.yaml`: source definition template for the current X collector
 - `memory/state.json`: synced dedupe state (`seen_ids`, reliable `updated_at`, compatibility `last_run`)
-- `memory/index.json`: synced index of all account/theme memory files
+- `memory/index.json`: synced index of account/theme/entity/event/macro/source memory files
 - `references/local-codex-intro.md`: first-stop intro for a local Codex session; read this before patching if you need the project in one page
 - `references/architecture.md`: stable layer boundaries and contracts; read it before moving logic between collector, store, analyzer, and digest
 - `references/collector-schema.md`: unified collector batch/item contract for future multi-source ingestion
+- `references/memory-schema.md`: claim-driven memory contract for financial entities, events, macro trends, and source assessments
 - `claude.md`: implementation notes and debugging detail; read it when patching selectors, manifests, or memory schemas
 
 ## Layered Design
@@ -121,22 +122,47 @@ Generate a Chinese brief from that prompt with this output discipline:
 - Use `primary_themes` for stable一级主题
 - Use `secondary_themes` to map each一级主题 to more specific二级主题
 - Use `account_notes` with usernames as keys and no leading `@`
+- Use `entity_updates` for stocks, companies, sectors, and supply-chain objects
+- Use `event_updates` for time-evolving events such as Iran/Hormuz
+- Use `macro_updates` for macro environment, liquidity, energy, and commodity trends
+- Use `source_assessments` for agent-maintained source notes
 - Send only the content before `### MEMORY_UPDATE` to Telegram
 
 Expected `MEMORY_UPDATE` shape:
 
 ```json
 {
-  "primary_themes": ["AI/人工智能", "Space/航天"],
+  "primary_themes": ["个股/公司", "地缘政治"],
   "secondary_themes": {
-    "AI/人工智能": ["Grok", "AI监管"],
-    "Space/航天": ["Starship"]
+    "个股/公司": ["A股标的", "液冷/温控"],
+    "地缘政治": ["伊朗", "霍尔木兹海峡"]
   },
   "account_notes": {
-    "elonmusk": "持续围绕火箭、AI 产品和政策发言。"
-  }
+    "example_user": "经常发布半导体和AI基础设施链条观点，需要结合公告和新闻交叉确认。"
+  },
+  "entity_updates": [
+    {
+      "entity_id": "cn_equity:英维克",
+      "entity_type": "equity",
+      "display_name": "英维克",
+      "claim": "市场讨论其液冷/温控业务可能受益于算力基础设施扩张。",
+      "claim_type": "thesis",
+      "verification_status": "plausible",
+      "confidence": 0.6,
+      "novelty": "high",
+      "materiality": "medium",
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"],
+      "action": "create_or_update"
+    }
+  ],
+  "event_updates": [],
+  "macro_updates": [],
+  "source_assessments": []
 }
 ```
+
+For the full claim-driven memory contract, read `references/memory-schema.md`.
 
 After generating the summary, save the full text to the summary path returned by:
 
@@ -156,6 +182,10 @@ python3 ~/.hermes/skills/signal-radar/monitor.py apply-memory --config ~/.hermes
 - updated `memory/index.json`
 - `memory/accounts/<username>.json`
 - `memory/themes/<primary-theme>.json`
+- `memory/entities/<entity-id>.json`
+- `memory/events/<event-id>.json`
+- `memory/macro/<macro-id>.json`
+- `memory/sources/<source-id>.json`
 - a structured `memory_update_*.json`
 - refreshed `latest_run.json`
 
@@ -163,6 +193,7 @@ Behavior notes:
 
 - `apply-memory` is idempotent for the same summary input; rerunning it does not inflate theme counts
 - 一级主题和二级主题都会先经过 alias 归一化再写入 memory
+- structured updates with `verification_status: rejected`, explicit skip actions, or duplicate/low-value novelty are ignored
 - `latest --field state` returns the synced state file path
 - when reading `memory/state.json`, prefer `updated_at` for the latest successful write time; `last_run` is kept for compatibility with older state consumers
 

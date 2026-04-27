@@ -54,6 +54,16 @@ X_SOURCE_ID = "x"
 X_COLLECTOR_TRANSPORT = "browser"
 X_COLLECTOR_IMPLEMENTATION = "playwright"
 
+VERIFICATION_STATUSES = {
+    "unverified",
+    "plausible",
+    "confirmed",
+    "superseded",
+    "rejected",
+}
+SKIP_MEMORY_ACTIONS = {"ignore", "ignored", "reject", "rejected", "skip", "no_op", "noop"}
+SKIP_NOVELTY_VALUES = {"duplicate", "duplicated", "none", "low_value", "no_value"}
+
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -76,6 +86,43 @@ def safe_filename(value: str) -> str:
     cleaned = re.sub(r"\s+", "_", cleaned)
     cleaned = cleaned.strip("._")
     return cleaned or "untitled"
+
+
+def clean_text(value: Any) -> str:
+    return str(value).strip() if value is not None else ""
+
+
+def normalize_verification_status(value: Any) -> str:
+    status = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    return status if status in VERIFICATION_STATUSES else "unverified"
+
+
+def should_skip_structured_memory_update(update: dict[str, Any]) -> bool:
+    action = clean_text(update.get("action") or update.get("timeline_action")).lower()
+    novelty = clean_text(update.get("novelty")).lower()
+    status = normalize_verification_status(update.get("verification_status"))
+    return (
+        action in SKIP_MEMORY_ACTIONS
+        or novelty in SKIP_NOVELTY_VALUES
+        or status == "rejected"
+    )
+
+
+def stable_claim_id(prefix: str, update: dict[str, Any], scope_keys: list[str]) -> str:
+    raw_claim_id = clean_text(update.get("claim_id") or update.get("id"))
+    if raw_claim_id:
+        return safe_filename(raw_claim_id)
+
+    identity: dict[str, Any] = {
+        "claim": clean_text(update.get("claim")),
+        "claim_type": clean_text(update.get("claim_type")),
+    }
+    for key in scope_keys:
+        identity[key] = clean_text(update.get(key))
+    digest = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"{prefix}_{digest[:16]}"
 
 
 def merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -432,6 +479,10 @@ class MemoryStore:
         self.root = Path(memory_dir)
         self.accounts_dir = self.root / "accounts"
         self.themes_dir = self.root / "themes"
+        self.entities_dir = self.root / "entities"
+        self.events_dir = self.root / "events"
+        self.macro_dir = self.root / "macro"
+        self.sources_dir = self.root / "sources"
         self.index_path = self.root / "index.json"
         self.lock_path = self.root / ".write.lock"
         self.normalizer = normalizer or ThemeNormalizer()
@@ -439,6 +490,10 @@ class MemoryStore:
     def ensure_dirs(self):
         self.accounts_dir.mkdir(parents=True, exist_ok=True)
         self.themes_dir.mkdir(parents=True, exist_ok=True)
+        self.entities_dir.mkdir(parents=True, exist_ok=True)
+        self.events_dir.mkdir(parents=True, exist_ok=True)
+        self.macro_dir.mkdir(parents=True, exist_ok=True)
+        self.sources_dir.mkdir(parents=True, exist_ok=True)
 
     def _read_json(self, path: Path, default: dict[str, Any]) -> dict[str, Any]:
         if path.exists():
@@ -502,6 +557,18 @@ class MemoryStore:
 
     def theme_path(self, primary_theme: str) -> Path:
         return self.themes_dir / f"{safe_filename(primary_theme)}.json"
+
+    def entity_path(self, entity_id: str) -> Path:
+        return self.entities_dir / f"{safe_filename(entity_id)}.json"
+
+    def event_path(self, event_id: str) -> Path:
+        return self.events_dir / f"{safe_filename(event_id)}.json"
+
+    def macro_path(self, macro_id: str) -> Path:
+        return self.macro_dir / f"{safe_filename(macro_id)}.json"
+
+    def source_path(self, source_id: str) -> Path:
+        return self.sources_dir / f"{safe_filename(source_id)}.json"
 
     def migrate_legacy_state(self, state: StateManager) -> bool:
         changed = False
@@ -679,6 +746,389 @@ class MemoryStore:
         self._write_json(path, payload)
         return True
 
+    def update_entity_memory(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        if should_skip_structured_memory_update(update):
+            return False
+
+        entity_id = clean_text(
+            update.get("entity_id")
+            or update.get("symbol")
+            or update.get("display_name")
+        )
+        claim = clean_text(update.get("claim") or update.get("summary"))
+        if not entity_id or not claim:
+            return False
+
+        claim_id = stable_claim_id("entity_claim", update, ["entity_id", "symbol"])
+        entry_update_id = f"{update_id}:{claim_id}"
+        path = self.entity_path(entity_id)
+        payload = self._read_json(
+            path,
+            {
+                "schema_version": "entity-memory/v1",
+                "entity_id": entity_id,
+                "entity_type": clean_text(update.get("entity_type")) or "unknown",
+                "display_name": clean_text(update.get("display_name")) or entity_id,
+                "aliases": [],
+                "created_at": seen_at,
+                "updated_at": seen_at,
+                "claims": {},
+                "recent_claim_ids": [],
+                "applied_update_ids": [],
+                "last_update_id": None,
+            },
+        )
+        applied_update_ids = payload.get("applied_update_ids", [])
+        if not isinstance(applied_update_ids, list):
+            applied_update_ids = []
+        if entry_update_id in applied_update_ids:
+            return False
+
+        aliases = unique_preserving_order(
+            coerce_string_list(payload.get("aliases"))
+            + coerce_string_list(update.get("aliases"))
+        )
+        claims = payload.get("claims", {})
+        if not isinstance(claims, dict):
+            claims = {}
+        existing = claims.get(claim_id, {})
+        if not isinstance(existing, dict):
+            existing = {}
+
+        evidence_item_ids = unique_preserving_order(
+            coerce_string_list(existing.get("evidence_item_ids"))
+            + coerce_string_list(update.get("evidence_item_ids"))
+        )
+        source_ids = unique_preserving_order(
+            coerce_string_list(existing.get("source_ids"))
+            + coerce_string_list(update.get("source_ids"))
+        )
+        claims[claim_id] = {
+            "claim_id": claim_id,
+            "claim": claim,
+            "claim_type": clean_text(update.get("claim_type")) or "signal",
+            "verification_status": normalize_verification_status(
+                update.get("verification_status")
+            ),
+            "confidence": update.get("confidence"),
+            "materiality": clean_text(update.get("materiality")),
+            "novelty": clean_text(update.get("novelty")),
+            "why_it_matters": clean_text(update.get("why_it_matters")),
+            "evidence_item_ids": evidence_item_ids,
+            "source_ids": source_ids,
+            "first_seen": existing.get("first_seen") or seen_at,
+            "last_seen": seen_at,
+            "update_count": int(existing.get("update_count", 0)) + 1,
+            "last_update_id": update_id,
+        }
+
+        recent_claim_ids = coerce_string_list(payload.get("recent_claim_ids"))
+        recent_claim_ids = unique_preserving_order(recent_claim_ids + [claim_id])[-30:]
+        payload.update(
+            {
+                "schema_version": "entity-memory/v1",
+                "entity_id": entity_id,
+                "entity_type": clean_text(update.get("entity_type"))
+                or payload.get("entity_type")
+                or "unknown",
+                "display_name": clean_text(update.get("display_name"))
+                or payload.get("display_name")
+                or entity_id,
+                "aliases": aliases,
+                "updated_at": seen_at,
+                "claims": claims,
+                "recent_claim_ids": recent_claim_ids,
+                "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
+                "last_update_id": update_id,
+            }
+        )
+        self._write_json(path, payload)
+        return True
+
+    def update_event_memory(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        if should_skip_structured_memory_update(update):
+            return False
+
+        event_id = clean_text(update.get("event_id") or update.get("title"))
+        claim = clean_text(update.get("claim") or update.get("summary"))
+        if not event_id or not claim:
+            return False
+
+        claim_id = stable_claim_id("event_claim", update, ["event_id", "timestamp"])
+        entry_update_id = f"{update_id}:{claim_id}"
+        path = self.event_path(event_id)
+        payload = self._read_json(
+            path,
+            {
+                "schema_version": "event-memory/v1",
+                "event_id": event_id,
+                "title": clean_text(update.get("title")) or event_id,
+                "created_at": seen_at,
+                "updated_at": seen_at,
+                "timeline": [],
+                "claims": {},
+                "applied_update_ids": [],
+                "last_update_id": None,
+            },
+        )
+        applied_update_ids = payload.get("applied_update_ids", [])
+        if not isinstance(applied_update_ids, list):
+            applied_update_ids = []
+        if entry_update_id in applied_update_ids:
+            return False
+
+        claims = payload.get("claims", {})
+        if not isinstance(claims, dict):
+            claims = {}
+        existing = claims.get(claim_id, {})
+        if not isinstance(existing, dict):
+            existing = {}
+        evidence_item_ids = unique_preserving_order(
+            coerce_string_list(existing.get("evidence_item_ids"))
+            + coerce_string_list(update.get("evidence_item_ids"))
+        )
+        source_ids = unique_preserving_order(
+            coerce_string_list(existing.get("source_ids"))
+            + coerce_string_list(update.get("source_ids"))
+        )
+        status = normalize_verification_status(update.get("verification_status"))
+        claims[claim_id] = {
+            "claim_id": claim_id,
+            "claim": claim,
+            "verification_status": status,
+            "confidence": update.get("confidence"),
+            "importance": clean_text(update.get("importance")),
+            "evidence_item_ids": evidence_item_ids,
+            "source_ids": source_ids,
+            "first_seen": existing.get("first_seen") or seen_at,
+            "last_seen": seen_at,
+            "update_count": int(existing.get("update_count", 0)) + 1,
+            "last_update_id": update_id,
+        }
+
+        timeline = payload.get("timeline", [])
+        if not isinstance(timeline, list):
+            timeline = []
+        timeline.append(
+            {
+                "time": clean_text(update.get("timestamp")) or seen_at,
+                "claim_id": claim_id,
+                "claim": claim,
+                "verification_status": status,
+                "importance": clean_text(update.get("importance")),
+                "evidence_item_ids": evidence_item_ids,
+                "source_ids": source_ids,
+            }
+        )
+        payload.update(
+            {
+                "schema_version": "event-memory/v1",
+                "event_id": event_id,
+                "title": clean_text(update.get("title")) or payload.get("title") or event_id,
+                "updated_at": seen_at,
+                "timeline": timeline[-80:],
+                "claims": claims,
+                "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
+                "last_update_id": update_id,
+            }
+        )
+        self._write_json(path, payload)
+        return True
+
+    def update_macro_memory(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        if should_skip_structured_memory_update(update):
+            return False
+
+        macro_id = clean_text(update.get("macro_id") or update.get("topic"))
+        claim = clean_text(update.get("claim") or update.get("observation"))
+        if not macro_id or not claim:
+            return False
+
+        claim_id = stable_claim_id("macro_claim", update, ["macro_id", "topic"])
+        entry_update_id = f"{update_id}:{claim_id}"
+        path = self.macro_path(macro_id)
+        payload = self._read_json(
+            path,
+            {
+                "schema_version": "macro-memory/v1",
+                "macro_id": macro_id,
+                "topic": clean_text(update.get("topic")) or macro_id,
+                "created_at": seen_at,
+                "updated_at": seen_at,
+                "observations": [],
+                "claims": {},
+                "applied_update_ids": [],
+                "last_update_id": None,
+            },
+        )
+        applied_update_ids = payload.get("applied_update_ids", [])
+        if not isinstance(applied_update_ids, list):
+            applied_update_ids = []
+        if entry_update_id in applied_update_ids:
+            return False
+
+        claims = payload.get("claims", {})
+        if not isinstance(claims, dict):
+            claims = {}
+        existing = claims.get(claim_id, {})
+        if not isinstance(existing, dict):
+            existing = {}
+        evidence_item_ids = unique_preserving_order(
+            coerce_string_list(existing.get("evidence_item_ids"))
+            + coerce_string_list(update.get("evidence_item_ids"))
+        )
+        source_ids = unique_preserving_order(
+            coerce_string_list(existing.get("source_ids"))
+            + coerce_string_list(update.get("source_ids"))
+        )
+        status = normalize_verification_status(update.get("verification_status"))
+        claims[claim_id] = {
+            "claim_id": claim_id,
+            "claim": claim,
+            "verification_status": status,
+            "confidence": update.get("confidence"),
+            "time_horizon": clean_text(update.get("time_horizon")),
+            "materiality": clean_text(update.get("materiality")),
+            "evidence_item_ids": evidence_item_ids,
+            "source_ids": source_ids,
+            "first_seen": existing.get("first_seen") or seen_at,
+            "last_seen": seen_at,
+            "update_count": int(existing.get("update_count", 0)) + 1,
+            "last_update_id": update_id,
+        }
+
+        observations = payload.get("observations", [])
+        if not isinstance(observations, list):
+            observations = []
+        observations.append(
+            {
+                "time": clean_text(update.get("timestamp")) or seen_at,
+                "claim_id": claim_id,
+                "claim": claim,
+                "verification_status": status,
+                "time_horizon": clean_text(update.get("time_horizon")),
+                "materiality": clean_text(update.get("materiality")),
+                "evidence_item_ids": evidence_item_ids,
+                "source_ids": source_ids,
+            }
+        )
+        payload.update(
+            {
+                "schema_version": "macro-memory/v1",
+                "macro_id": macro_id,
+                "topic": clean_text(update.get("topic")) or payload.get("topic") or macro_id,
+                "updated_at": seen_at,
+                "observations": observations[-80:],
+                "claims": claims,
+                "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
+                "last_update_id": update_id,
+            }
+        )
+        self._write_json(path, payload)
+        return True
+
+    def update_source_assessment(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        if should_skip_structured_memory_update(update):
+            return False
+
+        source_id = clean_text(
+            update.get("source_id")
+            or update.get("canonical_source_id")
+            or update.get("username")
+        )
+        if not source_id:
+            return False
+
+        entry_update_id = f"{update_id}:{safe_filename(source_id)}"
+        path = self.source_path(source_id)
+        payload = self._read_json(
+            path,
+            {
+                "schema_version": "source-memory/v1",
+                "source_id": source_id,
+                "source_type": clean_text(update.get("source_type")) or "unknown",
+                "display_name": clean_text(update.get("display_name")) or source_id,
+                "created_at": seen_at,
+                "updated_at": seen_at,
+                "latest_assessment": "",
+                "assessment_history": [],
+                "applied_update_ids": [],
+                "last_update_id": None,
+            },
+        )
+        applied_update_ids = payload.get("applied_update_ids", [])
+        if not isinstance(applied_update_ids, list):
+            applied_update_ids = []
+        if entry_update_id in applied_update_ids:
+            return False
+
+        assessment = clean_text(update.get("assessment") or update.get("note"))
+        history = payload.get("assessment_history", [])
+        if not isinstance(history, list):
+            history = []
+        if assessment and assessment != payload.get("latest_assessment"):
+            history.append(
+                {
+                    "time": seen_at,
+                    "assessment": assessment,
+                    "credibility": clean_text(update.get("credibility")),
+                    "requires_confirmation": clean_text(
+                        update.get("requires_confirmation")
+                    ),
+                    "bias_tags": coerce_string_list(update.get("bias_tags")),
+                }
+            )
+
+        payload.update(
+            {
+                "schema_version": "source-memory/v1",
+                "source_id": source_id,
+                "source_type": clean_text(update.get("source_type"))
+                or payload.get("source_type")
+                or "unknown",
+                "display_name": clean_text(update.get("display_name"))
+                or payload.get("display_name")
+                or source_id,
+                "updated_at": seen_at,
+                "latest_assessment": assessment or payload.get("latest_assessment", ""),
+                "credibility": clean_text(update.get("credibility"))
+                or payload.get("credibility", ""),
+                "requires_confirmation": clean_text(
+                    update.get("requires_confirmation")
+                )
+                or payload.get("requires_confirmation", ""),
+                "bias_tags": unique_preserving_order(
+                    coerce_string_list(payload.get("bias_tags"))
+                    + coerce_string_list(update.get("bias_tags"))
+                ),
+                "assessment_history": history[-20:],
+                "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
+                "last_update_id": update_id,
+            }
+        )
+        self._write_json(path, payload)
+        return True
+
     def get_account_notes(self) -> dict[str, str]:
         notes: dict[str, str] = {}
         if not self.accounts_dir.exists():
@@ -724,6 +1174,86 @@ class MemoryStore:
         memories.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
         return [item for item in memories if item.get("primary_theme")][:n]
 
+    def get_recent_entity_memories(self, n: int = 8) -> list[dict[str, Any]]:
+        memories: list[dict[str, Any]] = []
+        if not self.entities_dir.exists():
+            return memories
+        for path in self.entities_dir.glob("*.json"):
+            payload = self._read_json(path, {})
+            claim_ids = coerce_string_list(payload.get("recent_claim_ids"))[-3:]
+            claims = payload.get("claims", {})
+            claim_texts: list[str] = []
+            if isinstance(claims, dict):
+                for claim_id in claim_ids:
+                    claim_payload = claims.get(claim_id, {})
+                    if isinstance(claim_payload, dict):
+                        claim = clean_text(claim_payload.get("claim"))
+                        if claim:
+                            claim_texts.append(claim)
+            memories.append(
+                {
+                    "entity_id": clean_text(payload.get("entity_id")),
+                    "display_name": clean_text(payload.get("display_name")),
+                    "entity_type": clean_text(payload.get("entity_type")),
+                    "updated_at": clean_text(payload.get("updated_at")),
+                    "recent_claims": claim_texts,
+                }
+            )
+        memories.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+        return [item for item in memories if item.get("entity_id")][:n]
+
+    def get_recent_event_memories(self, n: int = 8) -> list[dict[str, Any]]:
+        memories: list[dict[str, Any]] = []
+        if not self.events_dir.exists():
+            return memories
+        for path in self.events_dir.glob("*.json"):
+            payload = self._read_json(path, {})
+            timeline = payload.get("timeline", [])
+            if not isinstance(timeline, list):
+                timeline = []
+            recent = []
+            for item in timeline[-3:]:
+                if isinstance(item, dict):
+                    claim = clean_text(item.get("claim"))
+                    if claim:
+                        recent.append(claim)
+            memories.append(
+                {
+                    "event_id": clean_text(payload.get("event_id")),
+                    "title": clean_text(payload.get("title")),
+                    "updated_at": clean_text(payload.get("updated_at")),
+                    "recent_claims": recent,
+                }
+            )
+        memories.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+        return [item for item in memories if item.get("event_id")][:n]
+
+    def get_recent_macro_memories(self, n: int = 8) -> list[dict[str, Any]]:
+        memories: list[dict[str, Any]] = []
+        if not self.macro_dir.exists():
+            return memories
+        for path in self.macro_dir.glob("*.json"):
+            payload = self._read_json(path, {})
+            observations = payload.get("observations", [])
+            if not isinstance(observations, list):
+                observations = []
+            recent = []
+            for item in observations[-3:]:
+                if isinstance(item, dict):
+                    claim = clean_text(item.get("claim"))
+                    if claim:
+                        recent.append(claim)
+            memories.append(
+                {
+                    "macro_id": clean_text(payload.get("macro_id")),
+                    "topic": clean_text(payload.get("topic")),
+                    "updated_at": clean_text(payload.get("updated_at")),
+                    "recent_claims": recent,
+                }
+            )
+        memories.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+        return [item for item in memories if item.get("macro_id")][:n]
+
     def rebuild_index(self):
         self.ensure_dirs()
         accounts: dict[str, Any] = {}
@@ -751,13 +1281,81 @@ class MemoryStore:
                 "latest_secondary_themes": payload.get("latest_secondary_themes", []),
             }
 
+        entities: dict[str, Any] = {}
+        for path in sorted(self.entities_dir.glob("*.json")):
+            payload = self._read_json(path, {})
+            entity_id = clean_text(payload.get("entity_id"))
+            if not entity_id:
+                continue
+            entities[entity_id] = {
+                "file": str(path.relative_to(self.root)),
+                "updated_at": payload.get("updated_at"),
+                "entity_type": payload.get("entity_type"),
+                "display_name": payload.get("display_name"),
+                "claim_count": len(payload.get("claims", {}))
+                if isinstance(payload.get("claims"), dict)
+                else 0,
+            }
+
+        events: dict[str, Any] = {}
+        for path in sorted(self.events_dir.glob("*.json")):
+            payload = self._read_json(path, {})
+            event_id = clean_text(payload.get("event_id"))
+            if not event_id:
+                continue
+            timeline = payload.get("timeline", [])
+            events[event_id] = {
+                "file": str(path.relative_to(self.root)),
+                "updated_at": payload.get("updated_at"),
+                "title": payload.get("title"),
+                "timeline_count": len(timeline) if isinstance(timeline, list) else 0,
+            }
+
+        macro: dict[str, Any] = {}
+        for path in sorted(self.macro_dir.glob("*.json")):
+            payload = self._read_json(path, {})
+            macro_id = clean_text(payload.get("macro_id"))
+            if not macro_id:
+                continue
+            observations = payload.get("observations", [])
+            macro[macro_id] = {
+                "file": str(path.relative_to(self.root)),
+                "updated_at": payload.get("updated_at"),
+                "topic": payload.get("topic"),
+                "observation_count": (
+                    len(observations) if isinstance(observations, list) else 0
+                ),
+            }
+
+        sources: dict[str, Any] = {}
+        for path in sorted(self.sources_dir.glob("*.json")):
+            payload = self._read_json(path, {})
+            source_id = clean_text(payload.get("source_id"))
+            if not source_id:
+                continue
+            sources[source_id] = {
+                "file": str(path.relative_to(self.root)),
+                "updated_at": payload.get("updated_at"),
+                "source_type": payload.get("source_type"),
+                "credibility": payload.get("credibility"),
+                "requires_confirmation": payload.get("requires_confirmation"),
+            }
+
         index_payload = {
-            "version": 2,
+            "version": 3,
             "updated_at": utc_now().isoformat(),
             "account_count": len(accounts),
             "theme_count": len(themes),
+            "entity_count": len(entities),
+            "event_count": len(events),
+            "macro_count": len(macro),
+            "source_count": len(sources),
             "accounts": accounts,
             "themes": themes,
+            "entities": entities,
+            "events": events,
+            "macro": macro,
+            "sources": sources,
         }
         self._write_json(self.index_path, index_payload)
 
@@ -1456,6 +2054,9 @@ def build_llm_prompt(
     predefined_themes: list[str],
 ) -> str:
     recent_theme_memories = memory_store.get_recent_theme_memories()
+    recent_entity_memories = memory_store.get_recent_entity_memories()
+    recent_event_memories = memory_store.get_recent_event_memories()
+    recent_macro_memories = memory_store.get_recent_macro_memories()
     account_notes = memory_store.get_account_notes()
 
     history_context = ""
@@ -1474,6 +2075,24 @@ def build_llm_prompt(
         history_context += "\n各账号历史画像:\n"
         for user, note in account_notes.items():
             history_context += f"  @{user}: {note}\n"
+    if recent_entity_memories:
+        history_context += "\n近期标的/公司记忆:\n"
+        for item in recent_entity_memories:
+            claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
+            history_context += (
+                f"  - {item['display_name'] or item['entity_id']}"
+                f" [{item.get('entity_type') or 'unknown'}]: {claims}\n"
+            )
+    if recent_event_memories:
+        history_context += "\n近期事件记忆:\n"
+        for item in recent_event_memories:
+            claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
+            history_context += f"  - {item['title'] or item['event_id']}: {claims}\n"
+    if recent_macro_memories:
+        history_context += "\n近期宏观记忆:\n"
+        for item in recent_macro_memories:
+            claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
+            history_context += f"  - {item['topic'] or item['macro_id']}: {claims}\n"
 
     theme_hint = ""
     if predefined_themes:
@@ -1482,10 +2101,10 @@ def build_llm_prompt(
             f"  {', '.join(predefined_themes)}\n"
         )
 
-    return f"""你是一个专业的 X (Twitter) 信息分析助手。
+    return f"""你是一个偏金融与地缘风险的社交信号分析助手。
 
 ## 任务
-将以下推文按主题归类，用中文输出结构化简报。
+将以下推文按主题归类，用中文输出结构化简报；同时抽取有价值的 claim，用于维护标的、事件、宏观和来源记忆。
 
 ## 输出要求
 1. 先写可直接发送到 Telegram 的正文
@@ -1511,15 +2130,47 @@ def build_llm_prompt(
 ### MEMORY_UPDATE
 ```json
 {
-  "primary_themes": ["AI/人工智能", "Space/航天"],
+  "primary_themes": ["个股/公司", "地缘政治"],
   "secondary_themes": {
-    "AI/人工智能": ["Grok", "AI监管"],
-    "Space/航天": ["Starship"]
+    "个股/公司": ["A股标的", "液冷/温控"],
+    "地缘政治": ["伊朗", "霍尔木兹海峡"]
   },
   "account_notes": {
-    "elonmusk": "持续围绕火箭、AI 产品和政策发言。",
-    "sama": "主要讨论 OpenAI 产品、模型能力和行业竞争。"
-  }
+    "example_user": "经常发布半导体和AI基础设施链条观点，需要结合公告和新闻交叉确认。"
+  },
+  "entity_updates": [
+    {
+      "entity_id": "cn_equity:英维克",
+      "entity_type": "equity",
+      "display_name": "英维克",
+      "claim": "市场讨论其液冷/温控业务可能受益于算力基础设施扩张。",
+      "claim_type": "thesis",
+      "verification_status": "plausible",
+      "confidence": 0.6,
+      "novelty": "high",
+      "materiality": "medium",
+      "why_it_matters": "影响市场对公司收入弹性和估值的预期。",
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"],
+      "action": "create_or_update"
+    }
+  ],
+  "event_updates": [
+    {
+      "event_id": "geopolitics:iran-hormuz",
+      "title": "伊朗-霍尔木兹海峡局势",
+      "timestamp": "2026-04-14T10:00:00Z",
+      "claim": "社交媒体开始交易海峡航运受阻风险，可能影响原油和航运资产预期。",
+      "verification_status": "unverified",
+      "confidence": 0.4,
+      "importance": "high",
+      "evidence_item_ids": ["x:456"],
+      "source_ids": ["x:example_user"],
+      "timeline_action": "append"
+    }
+  ],
+  "macro_updates": [],
+  "source_assessments": []
 }
 ```
 
@@ -1532,8 +2183,16 @@ def build_llm_prompt(
 6. `监控源` 与 `作者` 不同时，说明这是转推/转发线索
 7. 尽量复用已有一级主题；只有真的出现新方向时再创建新的一级主题
 8. 二级主题应该放在所属一级主题下面，不要把事件级名称直接当一级主题
-9. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，外层 key 只能是 `primary_themes`、`secondary_themes`、`account_notes`
-10. JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
+9. 对金融标的、地缘事件、宏观趋势，先抽取 claim，再判断是否值得进入 memory
+10. 明显虚假、重复且无增量、或低价值的信息不要写入 `entity_updates` / `event_updates` / `macro_updates`
+11. 单一社交媒体来源通常只能标为 `unverified` 或 `plausible`；只有多源或官方信息支持时才标为 `confirmed`
+12. `verification_status` 只能使用 `unverified`、`plausible`、`confirmed`、`superseded`、`rejected`
+13. `claim_type` 可使用 `fact`、`thesis`、`rumor`、`signal`；观点和推演不要写成事实
+14. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
+15. `event_updates` 用于会随时间发展的事件，按时间线追加
+16. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
+17. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度
+18. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
 {theme_hint}
 ## 历史上下文
 {history_context if history_context else "（首次运行，无历史数据）"}
@@ -1586,6 +2245,10 @@ def empty_memory_update() -> dict[str, Any]:
         "primary_themes": [],
         "secondary_themes": {},
         "account_notes": {},
+        "entity_updates": [],
+        "event_updates": [],
+        "macro_updates": [],
+        "source_assessments": [],
     }
 
 
@@ -1619,6 +2282,12 @@ def coerce_account_notes(value: Any) -> dict[str, str]:
         if username and note_text:
             normalized[username] = note_text
     return normalized
+
+
+def coerce_dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def extract_memory_update_object(summary_text: str) -> dict[str, Any] | None:
@@ -1750,11 +2419,13 @@ def parse_legacy_memory_update(summary_text: str) -> dict[str, Any]:
                 account_notes[current_user] + " " + line
             ).strip()
 
-    return {
+    parsed = empty_memory_update()
+    parsed.update({
         "primary_themes": primary_themes,
         "secondary_themes": secondary_themes,
         "account_notes": account_notes,
-    }
+    })
+    return parsed
 
 
 def parse_memory_update(summary_text: str) -> dict[str, Any]:
@@ -1770,10 +2441,20 @@ def parse_memory_update(summary_text: str) -> dict[str, Any]:
             payload.get("secondary_themes")
         )
         parsed["account_notes"] = coerce_account_notes(payload.get("account_notes"))
+        parsed["entity_updates"] = coerce_dict_list(payload.get("entity_updates"))
+        parsed["event_updates"] = coerce_dict_list(payload.get("event_updates"))
+        parsed["macro_updates"] = coerce_dict_list(payload.get("macro_updates"))
+        parsed["source_assessments"] = coerce_dict_list(
+            payload.get("source_assessments")
+        )
         if (
             parsed["primary_themes"]
             or parsed["secondary_themes"]
             or parsed["account_notes"]
+            or parsed["entity_updates"]
+            or parsed["event_updates"]
+            or parsed["macro_updates"]
+            or parsed["source_assessments"]
         ):
             return parsed
 
@@ -2051,6 +2732,10 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         not parsed["primary_themes"]
         and not parsed["secondary_themes"]
         and not parsed["account_notes"]
+        and not parsed["entity_updates"]
+        and not parsed["event_updates"]
+        and not parsed["macro_updates"]
+        and not parsed["source_assessments"]
     ):
         print("未在 summary 中找到可解析的 MEMORY_UPDATE")
         return 1
@@ -2109,6 +2794,10 @@ def apply_memory(config_path: str, summary_file: str) -> int:
     seen_at = utc_now().isoformat()
     theme_updates = 0
     account_updates = 0
+    entity_updates = 0
+    event_updates = 0
+    macro_updates = 0
+    source_updates = 0
     with memory_store.lock():
         memory_store.migrate_legacy_state(state)
 
@@ -2139,7 +2828,47 @@ def apply_memory(config_path: str, summary_file: str) -> int:
             ):
                 account_updates += 1
 
-        if theme_updates or account_updates or not memory_store.index_path.exists():
+        for update in parsed["entity_updates"]:
+            if memory_store.update_entity_memory(
+                update=update,
+                seen_at=seen_at,
+                update_id=update_id,
+            ):
+                entity_updates += 1
+
+        for update in parsed["event_updates"]:
+            if memory_store.update_event_memory(
+                update=update,
+                seen_at=seen_at,
+                update_id=update_id,
+            ):
+                event_updates += 1
+
+        for update in parsed["macro_updates"]:
+            if memory_store.update_macro_memory(
+                update=update,
+                seen_at=seen_at,
+                update_id=update_id,
+            ):
+                macro_updates += 1
+
+        for update in parsed["source_assessments"]:
+            if memory_store.update_source_assessment(
+                update=update,
+                seen_at=seen_at,
+                update_id=update_id,
+            ):
+                source_updates += 1
+
+        if (
+            theme_updates
+            or account_updates
+            or entity_updates
+            or event_updates
+            or macro_updates
+            or source_updates
+            or not memory_store.index_path.exists()
+        ):
             memory_store.rebuild_index()
 
     state.save(update_last_run=False)
@@ -2159,11 +2888,26 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "primary_themes": normalized_primary,
         "secondary_themes": normalized_secondary_mapping,
         "account_notes": parsed["account_notes"],
+        "entity_updates": parsed["entity_updates"],
+        "event_updates": parsed["event_updates"],
+        "macro_updates": parsed["macro_updates"],
+        "source_assessments": parsed["source_assessments"],
         "memory_dir": config["memory_dir"],
         "memory_index": str(memory_store.index_path),
         "theme_updates": theme_updates,
         "account_updates": account_updates,
-        "already_applied": theme_updates == 0 and account_updates == 0,
+        "entity_updates_applied": entity_updates,
+        "event_updates_applied": event_updates,
+        "macro_updates_applied": macro_updates,
+        "source_updates_applied": source_updates,
+        "already_applied": (
+            theme_updates == 0
+            and account_updates == 0
+            and entity_updates == 0
+            and event_updates == 0
+            and macro_updates == 0
+            and source_updates == 0
+        ),
     }
     atomic_write_json(memory_update_path, payload)
 
