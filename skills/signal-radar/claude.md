@@ -36,6 +36,8 @@ collector -> local store -> analyzer -> digest / alerts
 - `local store`
   - `reports/`
   - `latest_run.json`
+  - `MemoryBackend`
+  - `FileMemoryStore`
   - `memory/state.json`
   - `memory/accounts/*.json`
   - `memory/themes/*.json`
@@ -46,7 +48,7 @@ collector -> local store -> analyzer -> digest / alerts
   - `memory/index.json`
 - `analyzer`
   - Hermes / LLM 读取 `prompt_*.txt`
-  - 结合 `memory/` 生成中文摘要和严格 JSON `MEMORY_UPDATE`
+  - 结合当前 memory backend 提供的记忆生成中文摘要和严格 JSON `MEMORY_UPDATE`
 - `digest / alerts`
   - Telegram 或其他下游通知逻辑
   - 根据 `warning`、`new_tweet_count` 和 summary 决定发送什么
@@ -87,6 +89,44 @@ collector -> local store -> analyzer -> digest / alerts
 
 ## 技术选型与决策记录
 
+### 当前阶段为什么不上 Postgres？
+
+当前阶段不应该急着把 memory 改成 Postgres。原因很直接：项目还处在最初的开发期，真实长期记忆还没有积累起来，collector 是否稳定、分析字段是否够用、哪些 claim 值得长期保存，都还需要通过实际运行验证。
+
+这个阶段最重要的不是数据库能力，而是先把闭环跑顺：
+
+- 社交媒体和新闻内容能否稳定抓取、去重、保留原始证据
+- analyzer 能否判断新信息、重复信息、明显虚假信息和高价值 claim
+- `MEMORY_UPDATE` 能否稳定表达标的、事件、宏观、来源评价等更新
+- `apply-memory` 能否幂等、可回放、可调试地提交记忆更新
+
+因此当前选择是：
+
+```text
+文件 memory + 严格 schema + 可回放 reports + 幂等 apply-memory
+```
+
+这里的 `memory/*.json` 是开发期和 Hermes runtime 的本地 memory backend，也是未来数据库 schema 的原型。它不应该被理解成正式多用户产品的最终 memory backend。
+
+当前代码已经把这个边界显式化：
+
+- `MemoryBackend`：memory 写入与读取的抽象接口
+- `FileMemoryStore`：当前唯一实现，负责 `memory/*.json`、索引、锁和原子写
+- `memory_backend: file`：当前配置项，表示使用文件 backend
+- `apply-memory`：把 analyzer 的 `MEMORY_UPDATE` 提交给当前 backend，而不是让 analyzer 自己改 memory
+
+正式产品需要 Postgres 或类似数据库的时机，是出现以下信号之后：
+
+- 已经有几十到几百条真实 memory claim，可以反推稳定 schema
+- 需要按标的、主题、事件、来源、证据链做复杂查询
+- 文件合并、查重、版本管理开始明显痛苦
+- 出现多个 collector、多个 analysis worker 或多来源并发写入
+- 需要完整审计、回放、回滚和权限控制
+
+在这些信号出现之前，过早引入 Postgres 会把主要问题从“分析范式是否正确”转移成 schema migration、ORM、部署、连接、备份和事务设计，反而拖慢当前最关键的验证。
+
+当前架构要坚持的边界是：不要让业务逻辑到处依赖“文件路径就是业务模型”。`MEMORY_UPDATE`、`collector_batch/v1`、claim id、evidence item id、verification status 这些契约应该先稳定下来。未来如果切到 Postgres，文件 memory 应该自然降级成 export、debug、replay 或 Hermes 本地镜像，而不是被当成唯一真相源。
+
 ### 为什么选 Playwright 而不是 Python Scraper 库？
 
 我们最初尝试了 **twikit** 和 **tweety-ns** 这两个主流的 Python Twitter scraper 库。两者都依赖逆向 X 的内部 GraphQL API，通过模拟请求头和生成 `X-Client-Transaction-Id` 签名来绕过认证。
@@ -126,7 +166,7 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 
 - `collect`：抓取账号页面，生成 `data/collector_batch/prompt/report/summary/memory_update/warning` 等产物路径，并刷新 `latest_run.json`
 - `latest`：稳定读取 `latest_run.json`，避免 Hermes 通过 glob 猜文件名
-- `apply-memory`：解析 summary 尾部的 `MEMORY_UPDATE`，做主题归一化、幂等检查、记忆回写
+- `apply-memory`：解析 summary 尾部的 `MEMORY_UPDATE`，做主题归一化、幂等检查，并提交到当前 memory backend
 
 这三个命令共同构成 Hermes 的标准编排链路：
 
@@ -148,6 +188,7 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 - `state`
 - `warning`
 - `memory_dir`
+- `memory_backend`
 
 所以 Hermes 不需要猜目录结构，只需要读取 `latest` 输出。
 
@@ -251,7 +292,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 
 ### 5. 记忆结构、归一化与幂等
 
-记忆已经从单文件拆成了多文件结构：
+当前使用 `memory_backend: file`，由 `FileMemoryStore` 负责具体落盘。文件记忆已经从单文件拆成了多文件结构：
 
 - `memory/state.json`：去重和运行状态
 - `memory/accounts/<username>.json`：单账号记忆
@@ -269,7 +310,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - 二级主题按一级主题分别归一化  
   例如在 `AI/人工智能` 下面，`AI policy`、`AI政策` 可归一到 `AI监管`
 
-幂等机制是当前实现的关键变化。`apply-memory` 会基于 summary 内容和 run 身份生成稳定 `update_id`，并把它写入账号、主题和 claim-driven memory 文件的：
+幂等机制是当前实现的关键变化。`apply-memory` 会基于 summary 内容和 run 身份生成稳定 `update_id`，并通过当前 backend 把它写入账号、主题和 claim-driven memory 的：
 
 - `applied_update_ids`
 - `last_update_id`
@@ -295,6 +336,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `event_updates`
 - `macro_updates`
 - `source_assessments`
+- `memory_backend`
 - `theme_updates`
 - `account_updates`
 - `entity_updates_applied`
@@ -464,7 +506,10 @@ auth:
 # 去重状态文件（建议提交到 git）
 state_file: "memory/state.json"
 
-# 记忆目录
+# 当前只实现 file backend；未来可替换为 postgres 等 backend
+memory_backend: "file"
+
+# file backend 的记忆目录
 memory_dir: "memory"
 
 # 输出目录和最近一次运行索引
@@ -530,7 +575,7 @@ X 的登录 cookies 通常在 1-2 周后过期。过期后 Playwright 打开页�
 
 ### 本地锁与多 VPS 冲突
 
-系统现在有 `memory/.write.lock`，它能避免同一台机器上两个进程同时写记忆文件。
+`memory_backend: file` 下，系统现在有 `memory/.write.lock`，它能避免同一台机器上两个进程同时写记忆文件。
 
 但它解决不了下面这种情况：
 

@@ -18,13 +18,14 @@ collector -> local store -> analyzer -> digest / alerts
 - `local store`
   - `reports/*.json|*.txt`
   - `latest_run.json`
-  - `memory/`
+  - `MemoryBackend`
+  - `memory/`（当前 file backend）
 - `analyzer`
-  - LLM 读取 prompt、结合 memory 生成摘要和 `MEMORY_UPDATE`
+  - LLM 读取 prompt、结合 memory backend 暴露的记忆生成摘要和 `MEMORY_UPDATE`
 - `digest / alerts`
   - Telegram 或其他下游通知逻辑
 - `monitor.py apply-memory`
-  - 负责把 analyzer 的 `MEMORY_UPDATE` 安全写回 local store
+  - 负责把 analyzer 的 `MEMORY_UPDATE` 安全提交到当前 memory backend
 
 ## 为什么要分层
 
@@ -147,7 +148,8 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `memory/`
 - `monitor.py` 里的原子写 helpers
 - `StateManager`
-- `MemoryStore`
+- `MemoryBackend`
+- `FileMemoryStore`
 - `ThemeNormalizer`
 
 ### 数据类型
@@ -190,12 +192,13 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `paths.state`
 - `paths.warning`
 - `paths.memory_dir`
+- `memory_backend`
 - `summary.new_tweet_count`
 - `memory_update_applied`
 
 #### 长期记忆
 
-`memory/` 是可随 Git 同步、跨机器延续的状态：
+当前实现使用 `memory_backend: file`。`memory/` 是 file backend 的本地状态目录，可随 Git 同步、跨机器延续：
 
 - `memory/state.json`
 - `memory/accounts/<username>.json`
@@ -207,6 +210,8 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `memory/index.json`
 
 `accounts/` 和 `themes/` 保留原有账号画像与宽泛主题记忆。`entities/`、`events/`、`macro/` 和 `sources/` 用于金融/地缘场景下的 claim-driven memory，详细契约见 `references/memory-schema.md`。
+
+这里的关键边界是：业务层依赖 `MemoryBackend` 和 `MEMORY_UPDATE` contract，而不是依赖文件路径本身。当前只实现 `FileMemoryStore`，未来如果需要 Postgres，应新增 backend 实现，不应改 analyzer 输出协议。
 
 ### Git 同步边界
 
@@ -353,12 +358,13 @@ analyzer 依赖的应该是稳定文件路径，而不是浏览器上下文。�
 - `latest --field summary`
 - `latest --field state`
 - `latest --field memory_dir`
+- `latest --field memory_backend`
 
 如果未来进入多源模式，analyzer 还应该优先消费统一的 collector schema，而不是来源专属字段。
 
 ### Analyzer -> Local Store
 
-analyzer 的职责是输出可解析的 `MEMORY_UPDATE`。真正把它翻译成记忆文件的写入者，应该始终是 `apply-memory`。
+analyzer 的职责是输出可解析的 `MEMORY_UPDATE`。真正把它翻译成 backend 写入的提交者，应该始终是 `apply-memory`。
 
 ### Local Store -> Digest / Alerts
 

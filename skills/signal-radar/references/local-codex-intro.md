@@ -17,7 +17,7 @@ collect -> local store -> analyzer -> apply-memory
 - `SKILL.md` 主要面向部署态 / Hermes operator
 - 这份文档主要面向 repo-local 开发和本机验证
 - 当前 runtime 还是 X-first，但文档和 schema 已经开始为多来源做准备
-- `memory/` 建议随 Git 同步
+- 当前只实现 `memory_backend: file`，`memory/` 是 file backend 的本地目录，建议随 Git 同步
 - `cookies.json`、`reports/`、`latest_run.json` 不应提交
 - `memory/state.json` 里 `updated_at` 是当前更可靠的状态写入时间，`last_run` 主要保留给旧消费者兼容使用
 - 记忆模型已经从宽泛主题扩展为 claim-driven memory，可维护标的、事件、宏观和来源评价
@@ -48,7 +48,7 @@ collect -> local store -> analyzer -> apply-memory
 - `analyzer`
   负责读 prompt 和 memory，生成摘要与 `MEMORY_UPDATE`
 - `apply-memory`
-  是 analyzer 写回 memory 的唯一入口
+  是 analyzer 提交 `MEMORY_UPDATE` 到当前 memory backend 的唯一入口
 
 如果你准备改代码，尽量不要把抓取逻辑、主题判断、通知逻辑重新揉成一个大脚本。
 
@@ -72,6 +72,7 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 
 - 原始运行产物在 `reports/`
 - 最新运行索引在 `latest_run.json`
+- 当前 memory backend 是 `file`
 - 同步记忆在 `memory/`
 - 去重状态在 `memory/state.json`，其中 `updated_at` 比 `last_run` 更适合表示最近一次成功写入
 - 标的记忆在 `memory/entities/`
@@ -87,6 +88,7 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 - 不要把 `reports/` 当成长期数据源
 - 不要把 `last_run` 当成当前状态的唯一时间依据
 - 不要绕过 `apply-memory` 直接手写 memory 回写逻辑
+- 不要让业务逻辑依赖“文件路径就是业务模型”；依赖 `MEMORY_UPDATE` 和 memory backend 边界
 - 不要把未经验证的社交媒体观点写成 `confirmed`
 - 不要把 analyzer 重新耦合回浏览器流程
 - 如果只是要接新 source，优先补 `collectors/<source>/source.yaml` 和标准化输出，不要先改摘要层

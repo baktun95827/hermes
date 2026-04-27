@@ -21,7 +21,10 @@ auth:
 # 去重状态文件（自动维护；建议随 memory/ 一起提交，便于换 VPS 后继续去重）
 state_file: "memory/state.json"
 
-# 记忆目录：账号一文件，一级主题一文件
+# 当前只实现 file backend；未来可替换为 postgres 等正式 backend
+memory_backend: "file"
+
+# file backend 的记忆目录
 memory_dir: "memory"
 
 # 输出目录（prompt / report / summary / memory_update）

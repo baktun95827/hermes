@@ -5,7 +5,7 @@ Signal Radar for Hermes.
 Commands:
   - collect: scrape configured X accounts and write prompt/report artifacts
   - latest: print the latest artifact manifest or selected fields from it
-  - apply-memory: parse a Hermes summary and persist MEMORY_UPDATE into memory files
+  - apply-memory: parse a Hermes summary and submit MEMORY_UPDATE to memory backend
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
@@ -34,6 +34,7 @@ DEFAULT_CONFIG = {
     "discovery": {"enabled": True, "min_interactions": 3},
     "scroll_count": 5,
     "delay_between_accounts": 5,
+    "memory_backend": "file",
     "state_file": "memory/state.json",
     "memory_dir": "memory",
     "output_dir": "reports",
@@ -194,6 +195,15 @@ def load_config(path: str) -> dict[str, Any]:
         for item in config.get("accounts", [])
         if normalize_account_name(item)
     ]
+    config["memory_backend"] = (
+        str(config.get("memory_backend") or "file").strip().lower()
+    )
+    if config["memory_backend"] != "file":
+        print(
+            "当前只实现 memory_backend=file；"
+            f"收到不支持的 backend: {config['memory_backend']}"
+        )
+        sys.exit(1)
     config["auth"]["cookies_file"] = str(
         resolve_path(base_dir, config["auth"]["cookies_file"])
     )
@@ -267,11 +277,12 @@ class StateManager:
     """
     持久化状态：
     - seen_ids: 已处理过的推文 ID 集合（去重）
-    - last_run: 最近一次运行时间
+    - last_run: 兼容旧消费者的运行时间字段
+    - updated_at: 当前更可靠的状态文件最近写入时间
 
     兼容旧版本：
     - 如果旧 state.json 里仍有 theme_history/account_notes，
-      会在 MemoryStore 中迁移，然后从 state.json 清理掉
+      会在 FileMemoryStore 中迁移，然后从 state.json 清理掉
     """
 
     def __init__(self, state_file: str, legacy_paths: list[Path] | None = None):
@@ -474,7 +485,96 @@ class ThemeNormalizer:
         return normalized
 
 
-class MemoryStore:
+class MemoryBackend(Protocol):
+    root: Path
+    index_path: Path
+    normalizer: ThemeNormalizer
+
+    def lock(
+        self,
+        timeout_seconds: float = 30.0,
+        poll_interval_seconds: float = 0.2,
+        stale_after_seconds: float = 300.0,
+    ) -> Any:
+        ...
+
+    def migrate_legacy_state(self, state: StateManager) -> bool:
+        ...
+
+    def update_account_note(
+        self,
+        username: str,
+        note: str,
+        seen_at: str,
+        update_id: str,
+        primary_themes: list[str] | None = None,
+        secondary_themes: dict[str, list[str]] | None = None,
+    ) -> bool:
+        ...
+
+    def update_theme_memory(
+        self,
+        primary_theme: str,
+        secondary_themes: list[str],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        ...
+
+    def update_entity_memory(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        ...
+
+    def update_event_memory(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        ...
+
+    def update_macro_memory(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        ...
+
+    def update_source_assessment(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        ...
+
+    def get_account_notes(self) -> dict[str, str]:
+        ...
+
+    def get_recent_theme_memories(self, n: int = 10) -> list[dict[str, Any]]:
+        ...
+
+    def get_recent_entity_memories(self, n: int = 8) -> list[dict[str, Any]]:
+        ...
+
+    def get_recent_event_memories(self, n: int = 8) -> list[dict[str, Any]]:
+        ...
+
+    def get_recent_macro_memories(self, n: int = 8) -> list[dict[str, Any]]:
+        ...
+
+    def rebuild_index(self) -> None:
+        ...
+
+
+class FileMemoryStore:
+    """File-backed memory backend for local development and Hermes runtime."""
+
     def __init__(self, memory_dir: str, normalizer: ThemeNormalizer | None = None):
         self.root = Path(memory_dir)
         self.accounts_dir = self.root / "accounts"
@@ -1360,6 +1460,16 @@ class MemoryStore:
         self._write_json(self.index_path, index_payload)
 
 
+def create_memory_backend(
+    config: dict[str, Any],
+    normalizer: ThemeNormalizer | None = None,
+) -> MemoryBackend:
+    backend = str(config.get("memory_backend") or "file").strip().lower()
+    if backend == "file":
+        return FileMemoryStore(config["memory_dir"], normalizer=normalizer)
+    raise ValueError(f"unsupported memory backend: {backend}")
+
+
 @dataclass
 class FetchResult:
     username: str
@@ -2050,7 +2160,7 @@ def extract_keywords(tweets: list[dict[str, Any]], top_n: int = 10) -> list[str]
 def build_llm_prompt(
     raw_report: str,
     discovery_section: str,
-    memory_store: MemoryStore,
+    memory_store: MemoryBackend,
     predefined_themes: list[str],
 ) -> str:
     recent_theme_memories = memory_store.get_recent_theme_memories()
@@ -2109,7 +2219,7 @@ def build_llm_prompt(
 ## 输出要求
 1. 先写可直接发送到 Telegram 的正文
 2. 正文结束后，再追加 `### MEMORY_UPDATE`
-3. `### MEMORY_UPDATE` 不给最终用户看，只用于回写记忆文件
+3. `### MEMORY_UPDATE` 不给最终用户看，只用于提交到当前 memory backend
 4. 如果本次没有新推文，明确写“本次无新推文”，不要编造主题
 
 ## 正文格式
@@ -2509,7 +2619,7 @@ async def collect(config_path: str) -> int:
         alias_config=config.get("theme_aliases", {}),
         secondary_alias_config=config.get("secondary_theme_aliases", {}),
     )
-    memory_store = MemoryStore(config["memory_dir"], normalizer=normalizer)
+    memory_store = create_memory_backend(config, normalizer=normalizer)
     with memory_store.lock():
         memory_store.migrate_legacy_state(state)
         if not memory_store.index_path.exists():
@@ -2633,6 +2743,7 @@ async def collect(config_path: str) -> int:
             "warning": warning_path,
             "memory_dir": config["memory_dir"],
         },
+        "memory_backend": config["memory_backend"],
         "summary": {
             "new_tweet_count": len(all_tweets),
             "recommendation_count": len(recommendations),
@@ -2695,6 +2806,10 @@ def latest(config_path: str, field: str | None) -> int:
 
     if field == "memory_index":
         print(payload.get("paths", {}).get("memory_index") or "")
+        return 0
+
+    if field == "memory_backend":
+        print(payload.get("memory_backend") or "file")
         return 0
 
     if field == "state":
@@ -2790,7 +2905,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         alias_config=config.get("theme_aliases", {}),
         secondary_alias_config=config.get("secondary_theme_aliases", {}),
     )
-    memory_store = MemoryStore(config["memory_dir"], normalizer=normalizer)
+    memory_store = create_memory_backend(config, normalizer=normalizer)
     seen_at = utc_now().isoformat()
     theme_updates = 0
     account_updates = 0
@@ -2893,6 +3008,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "macro_updates": parsed["macro_updates"],
         "source_assessments": parsed["source_assessments"],
         "memory_dir": config["memory_dir"],
+        "memory_backend": config["memory_backend"],
         "memory_index": str(memory_store.index_path),
         "theme_updates": theme_updates,
         "account_updates": account_updates,
@@ -2916,6 +3032,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
     latest_payload["paths"]["memory_update"] = str(memory_update_path)
     latest_payload["paths"]["memory_index"] = str(memory_store.index_path)
     latest_payload["paths"]["state"] = config["state_file"]
+    latest_payload["memory_backend"] = config["memory_backend"]
     latest_payload["memory_update_applied"] = True
     latest_payload["memory_update"] = payload
     if "summary" not in latest_payload:
@@ -2952,6 +3069,7 @@ def build_parser() -> argparse.ArgumentParser:
             "summary",
             "memory_update",
             "memory_dir",
+            "memory_backend",
             "memory_index",
             "state",
             "warning",
@@ -2962,7 +3080,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     apply_parser = subparsers.add_parser(
         "apply-memory",
-        help="解析 summary 中的 MEMORY_UPDATE 并写入记忆文件",
+        help="解析 summary 中的 MEMORY_UPDATE 并提交到当前 memory backend",
     )
     apply_parser.add_argument(
         "--summary-file",

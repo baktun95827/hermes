@@ -1,6 +1,6 @@
 ---
 name: signal-radar
-description: Collect remote social signals starting with configured X accounts via Playwright, generate Telegram-ready Chinese briefs grouped by topic, and persist MEMORY_UPDATE into per-account and per-theme memory files for long-running Hermes workflows.
+description: Collect remote social signals starting with configured X accounts via Playwright, generate Telegram-ready Chinese briefs grouped by topic, and submit MEMORY_UPDATE to the configured memory backend for long-running Hermes workflows.
 metadata:
   hermes:
     tags: [x, twitter, monitoring, telegram, playwright, cron, memory]
@@ -25,7 +25,7 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 ## Files
 
 - `monitor.py`: collects tweets, exposes the latest artifact manifest, and applies `MEMORY_UPDATE`
-- `config.yaml`: monitored accounts, synced state path, topic hints, and alias normalization
+- `config.yaml`: monitored accounts, memory backend, synced state path, topic hints, and alias normalization
 - `collectors/registry.yaml`: multi-source collector registry; contract-first for future sources like Reddit or 雪球
 - `collectors/x/source.yaml`: source definition template for the current X collector
 - `memory/state.json`: synced dedupe state (`seen_ids`, reliable `updated_at`, compatibility `last_run`)
@@ -41,16 +41,16 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 Treat `signal-radar` as four layers:
 
 1. `collector`: `monitor.py collect` opens X with Playwright and writes raw artifacts
-2. `local store`: `reports/`, `latest_run.json`, and `memory/` persist raw outputs and synced memory
+2. `local store`: `reports/`, `latest_run.json`, and the configured memory backend persist raw outputs and synced memory
 3. `analyzer`: the LLM reads the prompt and memory, writes the digest, and emits strict JSON `MEMORY_UPDATE`
 4. `digest / alerts`: Hermes or another downstream workflow decides whether to alert, send a digest, or no-op
 
 Boundary rules:
 
 - the collector may use a browser, but it must not make final editorial judgments
-- the analyzer must not open webpages or mutate memory files directly
+- the analyzer must not open webpages or mutate memory backend state directly
 - the digest should read `latest` output and summary files, not scrape directories or guess paths
-- `apply-memory` is the only bridge that writes analyzer output back into `memory/`
+- `apply-memory` is the only bridge that submits analyzer output to the configured memory backend
 
 Multi-source note:
 
@@ -82,6 +82,12 @@ Accepted cookie formats:
 - browser-exported cookie array with `name/value/domain/path`
 
 Then update `config.yaml` with the target accounts and theme hints.
+
+Current memory backend:
+
+- `memory_backend: file` is the only implemented backend
+- `memory_dir: memory` controls the file-backed memory directory
+- keep the `MEMORY_UPDATE` contract stable so a future backend, such as Postgres, can replace the file implementation without changing analyzer output
 
 ## Workflow
 
@@ -176,7 +182,7 @@ Then persist memory:
 python3 ~/.hermes/skills/signal-radar/monitor.py apply-memory --config ~/.hermes/skills/signal-radar/config.yaml --summary-file ~/.hermes/skills/signal-radar/reports/summary_YYYYMMDD_HHMMSS.txt
 ```
 
-`apply-memory` parses the `MEMORY_UPDATE` block and writes:
+`apply-memory` parses the `MEMORY_UPDATE` block and submits it to the configured memory backend. Current `memory_backend: file` writes:
 
 - updated `memory/state.json` for dedupe; treat `updated_at` as the reliable write timestamp and `last_run` as a compatibility field
 - updated `memory/index.json`
@@ -194,6 +200,7 @@ Behavior notes:
 - `apply-memory` is idempotent for the same summary input; rerunning it does not inflate theme counts
 - 一级主题和二级主题都会先经过 alias 归一化再写入 memory
 - structured updates with `verification_status: rejected`, explicit skip actions, or duplicate/low-value novelty are ignored
+- `latest --field memory_backend` returns the active memory backend; currently this should be `file`
 - `latest --field state` returns the synced state file path
 - when reading `memory/state.json`, prefer `updated_at` for the latest successful write time; `last_run` is kept for compatibility with older state consumers
 

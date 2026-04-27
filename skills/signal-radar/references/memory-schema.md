@@ -4,6 +4,8 @@ This document defines the current memory model used by `apply-memory`.
 
 The older memory model only tracked account notes and broad themes. The current model keeps that compatibility layer, then adds claim-driven memory for financial and geopolitical analysis.
 
+Current implementation uses `memory_backend: file`, backed by `FileMemoryStore`. The contract in this document is backend-facing: analyzer output should stay stable if a future `PostgresMemoryStore` replaces the file implementation.
+
 ## Principle
 
 Do not store every post. Store claims that are useful, traceable, and tagged with verification status.
@@ -88,9 +90,20 @@ Example:
 }
 ```
 
-## Directory Layout
+## Backend Boundary
 
-Committed long-run memory lives under `memory/`:
+`apply-memory` is the only component that turns analyzer output into memory writes. The analyzer proposes `MEMORY_UPDATE`; the configured backend commits it after validation, normalization, skip rules, and idempotency checks.
+
+Current status:
+
+- implemented backend: `file`
+- implementation class: `FileMemoryStore`
+- configuration: `memory_backend: file`
+- future backend idea: `PostgresMemoryStore`, after real memory claims prove the schema
+
+## File Backend Layout
+
+When using `memory_backend: file`, committed long-run memory lives under `memory/`:
 
 - `memory/accounts/`: social account behavior and notes
 - `memory/themes/`: broad recurring topics
