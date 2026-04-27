@@ -37,6 +37,7 @@ Accepted `claim_type` values:
 
 New keys:
 
+- `event_clusters`: run-level grouping of multiple posts about the same event; clusters are recorded in artifacts and metrics, not as long-run memory by themselves
 - `signal_evaluations`: run-level or cluster-level value judgments, including skipped signals
 - `entity_updates`: stocks, companies, sectors, supply-chain objects; may include embedded `thesis_update`
 - `event_updates`: time-evolving events such as Iran/Hormuz or wars
@@ -45,7 +46,7 @@ New keys:
 - `alert_candidates`: possible content alerts for the digest layer to decide on
 - `contradictions`: suspected conflicts between claims, sources, data, or missing official verification
 
-`signal_evaluation` is the shared value-judgment shape. It may appear inside `signal_evaluations`, claim updates, and alert candidates:
+`signal_evaluation` is the shared value-judgment shape. It may appear inside `event_clusters`, `signal_evaluations`, claim updates, and alert candidates:
 
 ```json
 {
@@ -62,11 +63,36 @@ New keys:
 
 Accepted values:
 
-- `signal_type`: `new_fact`, `new_angle`, `repeat`, `noise`
+- `signal_type`: `new_fact`, `new_angle`, `confirmation`, `repeat`, `noise`
 - `novelty_level`: `high`, `medium`, `low`, `none`
 - `evidence_strength`: `weak`, `single_source`, `multi_source`, `official`
 - `memory_action`: `write`, `merge`, `skip`, `supersede`, `reject`
 - `alert_level`: `none`, `watch`, `important`, `urgent`
+
+`event_clusters` should be emitted before claim updates when multiple posts discuss the same event:
+
+```json
+{
+  "cluster_id": "xcluster:liquid-cooling-20260428",
+  "title": "液冷温控链条讨论升温",
+  "summary": "多个账号开始把英维克等温控标的与算力基础设施扩张联系起来，但仍缺少订单级验证。",
+  "theme": "个股/公司",
+  "secondary_themes": ["A股标的", "液冷/温控"],
+  "source_quality": "single_social_source",
+  "signal_type": "new_angle",
+  "novelty_level": "medium",
+  "evidence_strength": "single_source",
+  "memory_action": "write",
+  "alert_level": "watch",
+  "confidence": 0.55,
+  "what_changed": "相对旧记忆，本次新增的是温控业务弹性讨论开始和算力基础设施扩张绑定。",
+  "evidence_item_ids": ["x:123"],
+  "source_ids": ["x:example_user"],
+  "related_entity_ids": ["cn_equity:英维克"]
+}
+```
+
+Claim updates should reuse the cluster's `cluster_id`. `event_clusters` are not written to `memory/events/` unless a corresponding `event_updates` item is accepted.
 
 Accepted claim updates in `entity_updates`, `event_updates`, and `macro_updates` should include diff fields when the analyzer can infer them:
 
@@ -117,6 +143,26 @@ Example:
   "account_notes": {
     "example_user": "经常发布半导体和AI基础设施链条观点，需要交叉确认。"
   },
+  "event_clusters": [
+    {
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "title": "液冷温控链条讨论升温",
+      "summary": "多个账号开始把英维克等温控标的与算力基础设施扩张联系起来，但仍缺少订单级验证。",
+      "theme": "个股/公司",
+      "secondary_themes": ["A股标的", "液冷/温控"],
+      "source_quality": "single_social_source",
+      "signal_type": "new_angle",
+      "novelty_level": "medium",
+      "evidence_strength": "single_source",
+      "memory_action": "write",
+      "alert_level": "watch",
+      "confidence": 0.55,
+      "what_changed": "相对旧记忆，本次新增的是温控业务弹性讨论开始和算力基础设施扩张绑定。",
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"],
+      "related_entity_ids": ["cn_equity:英维克"]
+    }
+  ],
   "signal_evaluations": [
     {
       "cluster_id": "xcluster:liquid-cooling-20260428",
@@ -201,9 +247,15 @@ Example:
       "source_type": "commentary",
       "assessment": "对AI基础设施链条有持续观点输出，但需要公告和新闻交叉确认。",
       "source_profile": {
-        "topic_strength": {"个股/公司": 0.7},
+        "source_type": "analyst",
+        "topic_scores": {"个股/公司": 0.7, "AI/算力": 0.6},
         "repeat_tendency": "medium",
-        "confirmation_required": "high"
+        "repeat_rate": 0.4,
+        "hit_rate": 0.3,
+        "trust_score": 0.62,
+        "valuable_count": 3,
+        "confirmation_required": "high",
+        "bias_tags": ["产业链多头", "需公告验证"]
       }
     }
   ],
@@ -277,6 +329,16 @@ When an accepted `entity_updates` item includes `thesis_update`, the file backen
 - `recent_thesis_ids`: keeps recent thesis context available to the next analyzer prompt
 
 This intentionally keeps thesis memory inside entity memory for the current stage. A separate thesis backend can be introduced later only if cross-entity thesis queries become a real bottleneck.
+
+Accepted `source_assessments.source_profile` updates are normalized into `memory/sources/<source-id>.json`:
+
+- `source_type`: `primary`, `official`, `analyst`, `aggregator`, `trader`, `media`, `commentary`, `noise`, `unknown`
+- `topic_scores`: topic-to-score map from 0 to 1; `topic_strength` remains a backward-compatible alias
+- `repeat_tendency`: `low`, `medium`, `high`, `unknown`
+- `repeat_rate`, `hit_rate`, `trust_score`: floats from 0 to 1
+- `valuable_count`: non-negative count, incremented for valuable source updates when no explicit count is supplied
+- `confirmation_required`: `none`, `low`, `medium`, `high`, `multi_source`, `official`, `unknown`
+- `bias_tags`: observed stance or behavior tags
 
 `contradictions` are written to `memory/contradictions/<contradiction-id>.json` and indexed. They are deliberately observational:
 

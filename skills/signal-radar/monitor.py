@@ -65,6 +65,7 @@ VERIFICATION_STATUSES = {
 SIGNAL_TYPES = {
     "new_fact",
     "new_angle",
+    "confirmation",
     "repeat",
     "noise",
     "unknown",
@@ -104,6 +105,27 @@ THESIS_STATUSES = {
     "superseded",
     "unknown",
 }
+SOURCE_TYPES = {
+    "primary",
+    "official",
+    "analyst",
+    "aggregator",
+    "trader",
+    "media",
+    "commentary",
+    "noise",
+    "unknown",
+}
+CONFIRMATION_REQUIRED_LEVELS = {
+    "none",
+    "low",
+    "medium",
+    "high",
+    "multi_source",
+    "official",
+    "unknown",
+}
+REPEAT_TENDENCIES = {"low", "medium", "high", "unknown"}
 SKIP_MEMORY_ACTIONS = {"ignore", "ignored", "reject", "rejected", "skip", "no_op", "noop"}
 SKIP_NOVELTY_VALUES = {"duplicate", "duplicated", "none", "low_value", "no_value"}
 SKIP_SIGNAL_TYPES = {"noise"}
@@ -148,6 +170,8 @@ def normalize_signal_type(value: Any) -> str:
         "new": "new_fact",
         "new_view": "new_angle",
         "angle": "new_angle",
+        "confirm": "confirmation",
+        "confirmed_signal": "confirmation",
         "duplicate": "repeat",
         "duplicated": "repeat",
     }
@@ -290,6 +314,54 @@ def normalize_thesis_status(value: Any) -> str:
     return status if status in THESIS_STATUSES else "active"
 
 
+def normalize_source_type(value: Any) -> str:
+    source_type = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "first_hand": "primary",
+        "first_party": "primary",
+        "company": "official",
+        "gov": "official",
+        "government": "official",
+        "news": "media",
+        "journalist": "media",
+        "commentator": "commentary",
+        "opinion": "commentary",
+        "pump": "noise",
+        "spam": "noise",
+    }
+    source_type = aliases.get(source_type, source_type)
+    return source_type if source_type in SOURCE_TYPES else "unknown"
+
+
+def normalize_confirmation_required(value: Any) -> str:
+    level = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "no": "none",
+        "false": "none",
+        "single": "low",
+        "some": "medium",
+        "strong": "high",
+        "multi": "multi_source",
+        "multiple": "multi_source",
+        "official_confirmation": "official",
+    }
+    level = aliases.get(level, level)
+    return level if level in CONFIRMATION_REQUIRED_LEVELS else "unknown"
+
+
+def normalize_repeat_tendency(value: Any) -> str:
+    tendency = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "rare": "low",
+        "little": "low",
+        "normal": "medium",
+        "often": "high",
+        "frequent": "high",
+    }
+    tendency = aliases.get(tendency, tendency)
+    return tendency if tendency in REPEAT_TENDENCIES else "unknown"
+
+
 def coerce_float_or_none(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -422,6 +494,24 @@ def stable_contradiction_id(update: dict[str, Any]) -> str:
         json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     return f"contradiction_{digest[:16]}"
+
+
+def stable_event_cluster_id(update: dict[str, Any]) -> str:
+    raw_cluster_id = clean_text(update.get("cluster_id") or update.get("id"))
+    if raw_cluster_id:
+        return safe_filename(raw_cluster_id)
+
+    identity = {
+        "title": clean_text(update.get("title")),
+        "summary": clean_text(update.get("summary")),
+        "theme": clean_text(update.get("theme") or update.get("primary_theme")),
+        "evidence_item_ids": coerce_string_list(update.get("evidence_item_ids")),
+        "source_ids": coerce_string_list(update.get("source_ids")),
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"cluster_{digest[:16]}"
 
 
 def stable_thesis_id(
@@ -749,6 +839,7 @@ def build_artifact_paths(output_dir: Path, run_id: str) -> dict[str, Path]:
         "report": output_dir / f"report_{run_id}.txt",
         "summary": output_dir / f"summary_{run_id}.txt",
         "memory_update": output_dir / f"memory_update_{run_id}.json",
+        "run_metrics": output_dir / f"run_metrics_{run_id}.json",
         "warning": output_dir / f"warning_{run_id}.txt",
     }
 
@@ -1054,6 +1145,9 @@ class MemoryBackend(Protocol):
         ...
 
     def get_recent_macro_memories(self, n: int = 8) -> list[dict[str, Any]]:
+        ...
+
+    def get_recent_source_memories(self, n: int = 8) -> list[dict[str, Any]]:
         ...
 
     def rebuild_index(self) -> None:
@@ -1798,6 +1892,8 @@ class FileMemoryStore:
                 "latest_assessment": "",
                 "assessment_history": [],
                 "topic_strength": {},
+                "topic_scores": {},
+                "source_profile": {},
                 "applied_update_ids": [],
                 "last_update_id": None,
             },
@@ -1817,6 +1913,48 @@ class FileMemoryStore:
 
         assessment = clean_text(update.get("assessment") or update.get("note"))
         signal_evaluation = build_signal_evaluation(update)
+        raw_source_type = profile_field("source_type")
+        normalized_source_type = normalize_source_type(raw_source_type)
+        if normalized_source_type == "unknown":
+            normalized_source_type = payload.get("source_type") or "unknown"
+        normalized_confirmation_required = normalize_confirmation_required(
+            profile_field("confirmation_required")
+        )
+        if normalized_confirmation_required == "unknown":
+            normalized_confirmation_required = (
+                payload.get("confirmation_required") or "unknown"
+            )
+        normalized_repeat_tendency = normalize_repeat_tendency(
+            profile_field("repeat_tendency")
+        )
+        if normalized_repeat_tendency == "unknown":
+            normalized_repeat_tendency = payload.get("repeat_tendency") or "unknown"
+        trust_score = (
+            coerce_float_or_none(profile_field("trust_score"))
+            if profile_field("trust_score") is not None
+            else payload.get("trust_score")
+        )
+        hit_rate = (
+            coerce_float_or_none(profile_field("hit_rate"))
+            if profile_field("hit_rate") is not None
+            else payload.get("hit_rate")
+        )
+        repeat_rate = (
+            coerce_float_or_none(profile_field("repeat_rate"))
+            if profile_field("repeat_rate") is not None
+            else payload.get("repeat_rate")
+        )
+        previous_valuable_count = coerce_non_negative_int(
+            payload.get("valuable_count")
+        ) or 0
+        explicit_valuable_count = coerce_non_negative_int(
+            profile_field("valuable_count")
+        )
+        valuable_count = (
+            explicit_valuable_count
+            if explicit_valuable_count is not None
+            else previous_valuable_count + (1 if is_valuable_signal(signal_evaluation) else 0)
+        )
         history = payload.get("assessment_history", [])
         if not isinstance(history, list):
             history = []
@@ -1829,29 +1967,51 @@ class FileMemoryStore:
                     "requires_confirmation": clean_text(
                         update.get("requires_confirmation")
                     ),
-                    "confirmation_required": clean_text(
-                        profile_field("confirmation_required")
+                    "source_type": normalized_source_type,
+                    "confirmation_required": normalized_confirmation_required,
+                    "repeat_tendency": normalized_repeat_tendency,
+                    "trust_score": trust_score,
+                    "bias_tags": coerce_string_list(
+                        profile_field("bias_tags") or update.get("bias_tags")
                     ),
-                    "bias_tags": coerce_string_list(update.get("bias_tags")),
                     "signal_evaluation": signal_evaluation,
                 }
             )
 
-        topic_strength = payload.get("topic_strength", {})
-        if not isinstance(topic_strength, dict):
-            topic_strength = {}
-        topic_strength.update(coerce_number_mapping(profile_field("topic_strength")))
+        topic_scores = payload.get("topic_scores") or payload.get("topic_strength", {})
+        if not isinstance(topic_scores, dict):
+            topic_scores = {}
+        topic_scores.update(
+            coerce_number_mapping(
+                profile_field("topic_scores") or profile_field("topic_strength")
+            )
+        )
         last_valuable_at = clean_text(profile_field("last_valuable_at"))
         if not last_valuable_at and is_valuable_signal(signal_evaluation):
             last_valuable_at = seen_at
+
+        bias_tags = unique_preserving_order(
+            coerce_string_list(payload.get("bias_tags"))
+            + coerce_string_list(profile_field("bias_tags") or update.get("bias_tags"))
+        )
+        source_profile_payload = {
+            "source_type": normalized_source_type,
+            "topic_scores": topic_scores,
+            "repeat_tendency": normalized_repeat_tendency,
+            "repeat_rate": repeat_rate,
+            "hit_rate": hit_rate,
+            "trust_score": trust_score,
+            "valuable_count": valuable_count,
+            "last_valuable_at": last_valuable_at or payload.get("last_valuable_at"),
+            "confirmation_required": normalized_confirmation_required,
+            "bias_tags": bias_tags,
+        }
 
         payload.update(
             {
                 "schema_version": "source-memory/v1",
                 "source_id": source_id,
-                "source_type": clean_text(profile_field("source_type"))
-                or payload.get("source_type")
-                or "unknown",
+                "source_type": normalized_source_type,
                 "display_name": clean_text(update.get("display_name"))
                 or payload.get("display_name")
                 or source_id,
@@ -1865,27 +2025,16 @@ class FileMemoryStore:
                     update.get("requires_confirmation")
                 )
                 or payload.get("requires_confirmation", ""),
-                "confirmation_required": clean_text(
-                    profile_field("confirmation_required")
-                )
-                or payload.get("confirmation_required", ""),
-                "repeat_tendency": clean_text(profile_field("repeat_tendency"))
-                or payload.get("repeat_tendency", ""),
-                "hit_rate": (
-                    coerce_float_or_none(profile_field("hit_rate"))
-                    if profile_field("hit_rate") is not None
-                    else payload.get("hit_rate")
-                ),
-                "repeat_rate": (
-                    coerce_float_or_none(profile_field("repeat_rate"))
-                    if profile_field("repeat_rate") is not None
-                    else payload.get("repeat_rate")
-                ),
-                "topic_strength": topic_strength,
-                "bias_tags": unique_preserving_order(
-                    coerce_string_list(payload.get("bias_tags"))
-                    + coerce_string_list(update.get("bias_tags"))
-                ),
+                "confirmation_required": normalized_confirmation_required,
+                "repeat_tendency": normalized_repeat_tendency,
+                "hit_rate": hit_rate,
+                "repeat_rate": repeat_rate,
+                "trust_score": trust_score,
+                "valuable_count": valuable_count,
+                "topic_strength": topic_scores,
+                "topic_scores": topic_scores,
+                "bias_tags": bias_tags,
+                "source_profile": source_profile_payload,
                 "latest_signal_evaluation": signal_evaluation,
                 "assessment_history": history[-20:],
                 "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
@@ -2186,6 +2335,57 @@ class FileMemoryStore:
         memories.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
         return [item for item in memories if item.get("macro_id")][:n]
 
+    def get_recent_source_memories(self, n: int = 8) -> list[dict[str, Any]]:
+        memories: list[dict[str, Any]] = []
+        if not self.sources_dir.exists():
+            return memories
+        for path in self.sources_dir.glob("*.json"):
+            payload = self._read_json(path, {})
+            source_id = clean_text(payload.get("source_id"))
+            if not source_id:
+                continue
+            topic_scores = payload.get("topic_scores") or payload.get(
+                "topic_strength", {}
+            )
+            if not isinstance(topic_scores, dict):
+                topic_scores = {}
+            top_topics = sorted(
+                (
+                    (clean_text(topic), coerce_float_or_none(score))
+                    for topic, score in topic_scores.items()
+                ),
+                key=lambda item: item[1] if item[1] is not None else -1,
+                reverse=True,
+            )
+            memories.append(
+                {
+                    "source_id": source_id,
+                    "display_name": clean_text(payload.get("display_name")),
+                    "source_type": clean_text(payload.get("source_type")),
+                    "updated_at": clean_text(payload.get("updated_at")),
+                    "last_valuable_at": clean_text(payload.get("last_valuable_at")),
+                    "confirmation_required": clean_text(
+                        payload.get("confirmation_required")
+                    ),
+                    "repeat_tendency": clean_text(payload.get("repeat_tendency")),
+                    "trust_score": payload.get("trust_score"),
+                    "valuable_count": payload.get("valuable_count"),
+                    "top_topics": [
+                        {"topic": topic, "score": score}
+                        for topic, score in top_topics[:5]
+                        if topic and score is not None
+                    ],
+                    "latest_assessment": clean_text(
+                        payload.get("latest_assessment")
+                    ),
+                }
+            )
+        memories.sort(
+            key=lambda item: item.get("last_valuable_at") or item.get("updated_at", ""),
+            reverse=True,
+        )
+        return memories[:n]
+
     def rebuild_index(self):
         self.ensure_dirs()
         accounts: dict[str, Any] = {}
@@ -2286,6 +2486,10 @@ class FileMemoryStore:
                 "requires_confirmation": payload.get("requires_confirmation"),
                 "confirmation_required": payload.get("confirmation_required"),
                 "repeat_tendency": payload.get("repeat_tendency"),
+                "trust_score": payload.get("trust_score"),
+                "valuable_count": payload.get("valuable_count", 0),
+                "topic_scores": payload.get("topic_scores")
+                or payload.get("topic_strength", {}),
             }
 
         contradictions: dict[str, Any] = {}
@@ -2306,7 +2510,7 @@ class FileMemoryStore:
             }
 
         index_payload = {
-            "version": 5,
+            "version": 6,
             "updated_at": utc_now().isoformat(),
             "account_count": len(accounts),
             "theme_count": len(themes),
@@ -2917,6 +3121,91 @@ def build_x_collector_batch(
     }
 
 
+def build_collect_run_metrics(
+    run_id: str,
+    started_at: str,
+    finished_at: str,
+    runtime_seconds: float,
+    accounts: list[str],
+    fetch_results: list[FetchResult],
+    all_tweets: list[dict[str, Any]],
+    recommendations: list[dict[str, Any]],
+    keywords: list[str],
+    warning: str | None,
+) -> dict[str, Any]:
+    status_counts = Counter(result.status for result in fetch_results)
+    accounts_failed = sum(1 for result in fetch_results if result.status != STATUS_OK)
+    visible_tweets = sum(result.visible_tweet_count for result in fetch_results)
+    new_tweets = sum(result.new_tweet_count for result in fetch_results)
+    return {
+        "schema_version": "signal-radar-run-metrics/v1",
+        "run_id": run_id,
+        "status": "warning" if warning else "ok",
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "updated_at": finished_at,
+        "runtime_seconds": round(runtime_seconds, 3),
+        "collector": {
+            "accounts_configured": len(accounts),
+            "accounts_checked": len(fetch_results),
+            "accounts_succeeded": status_counts.get(STATUS_OK, 0),
+            "accounts_failed": accounts_failed,
+            "status_counts": dict(status_counts),
+            "tweets_raw": visible_tweets,
+            "tweets_new": new_tweets,
+            "tweets_after_dedup": len(all_tweets),
+            "recommendation_count": len(recommendations),
+            "keyword_count": len(keywords),
+            "warning": bool(warning),
+        },
+        "analysis": {
+            "event_clusters": 0,
+            "high_novelty_events": 0,
+            "signal_evaluations": 0,
+            "high_novelty_signals": 0,
+            "alert_candidates": 0,
+            "contradictions": 0,
+        },
+        "memory": {
+            "memory_updates": 0,
+            "theme_updates": 0,
+            "account_updates": 0,
+            "entity_updates": 0,
+            "event_updates": 0,
+            "macro_updates": 0,
+            "source_updates": 0,
+            "contradiction_updates": 0,
+        },
+    }
+
+
+def read_json_file(path: Path, default: dict[str, Any]) -> dict[str, Any]:
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                return loaded
+        except Exception:
+            pass
+    return dict(default)
+
+
+def count_high_novelty_event_clusters(event_clusters: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for item in event_clusters
+        if build_signal_evaluation(item).get("novelty_level") == "high"
+    )
+
+
+def count_high_novelty_signals(signal_evaluations: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for item in signal_evaluations
+        if build_signal_evaluation(item).get("novelty_level") == "high"
+    )
+
+
 class DiscoveryEngine:
     def __init__(self, monitored: list[str], min_interactions: int = 3):
         self.monitored = {normalize_account_name(item).lower() for item in monitored}
@@ -3033,6 +3322,7 @@ def build_llm_prompt(
     recent_entity_memories = memory_store.get_recent_entity_memories()
     recent_event_memories = memory_store.get_recent_event_memories()
     recent_macro_memories = memory_store.get_recent_macro_memories()
+    recent_source_memories = memory_store.get_recent_source_memories()
     account_notes = memory_store.get_account_notes()
 
     history_context = ""
@@ -3081,6 +3371,29 @@ def build_llm_prompt(
             changes = "；".join(item.get("recent_changes") or [])
             if changes:
                 history_context += f"    recent changes: {changes}\n"
+    if recent_source_memories:
+        history_context += "\n近期来源画像:\n"
+        for item in recent_source_memories:
+            topic_parts = []
+            for topic in item.get("top_topics") or []:
+                if not isinstance(topic, dict):
+                    continue
+                topic_name = clean_text(topic.get("topic"))
+                score = topic.get("score")
+                if topic_name and score is not None:
+                    topic_parts.append(f"{topic_name}:{score}")
+            topic_text = ", ".join(topic_parts) if topic_parts else "（暂无主题评分）"
+            trust_score = item.get("trust_score")
+            trust_text = f"{trust_score}" if trust_score is not None else "unknown"
+            history_context += (
+                f"  - {item['display_name'] or item['source_id']}"
+                f" [{item.get('source_type') or 'unknown'}]: "
+                f"trust={trust_text}, repeat={item.get('repeat_tendency') or 'unknown'}, "
+                f"confirm={item.get('confirmation_required') or 'unknown'}, "
+                f"valuable_count={item.get('valuable_count') or 0}, topics={topic_text}\n"
+            )
+            if item.get("latest_assessment"):
+                history_context += f"    assessment: {item['latest_assessment']}\n"
 
     theme_hint = ""
     if predefined_themes:
@@ -3100,6 +3413,26 @@ def build_llm_prompt(
   "account_notes": {
     "example_user": "经常发布半导体和AI基础设施链条观点，需要结合公告和新闻交叉确认。"
   },
+  "event_clusters": [
+    {
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "title": "液冷温控链条讨论升温",
+      "summary": "多个账号开始把英维克等温控标的与算力基础设施扩张联系起来，但仍缺少订单级验证。",
+      "theme": "个股/公司",
+      "secondary_themes": ["A股标的", "液冷/温控"],
+      "source_quality": "single_social_source",
+      "signal_type": "new_angle",
+      "novelty_level": "medium",
+      "evidence_strength": "single_source",
+      "memory_action": "write",
+      "alert_level": "watch",
+      "confidence": 0.55,
+      "what_changed": "相对旧记忆，本次新增的是温控业务弹性讨论开始和算力基础设施扩张绑定。",
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"],
+      "related_entity_ids": ["cn_equity:英维克"]
+    }
+  ],
   "signal_evaluations": [
     {
       "cluster_id": "xcluster:liquid-cooling-20260428",
@@ -3186,9 +3519,15 @@ def build_llm_prompt(
       "source_type": "commentary",
       "assessment": "对AI基础设施链条有持续观点输出，但需要公告和新闻交叉确认。",
       "source_profile": {
-        "topic_strength": {"个股/公司": 0.7},
+        "source_type": "analyst",
+        "topic_scores": {"个股/公司": 0.7, "AI/算力": 0.6},
         "repeat_tendency": "medium",
-        "confirmation_required": "high"
+        "repeat_rate": 0.4,
+        "hit_rate": 0.3,
+        "trust_score": 0.62,
+        "valuable_count": 3,
+        "confirmation_required": "high",
+        "bias_tags": ["产业链多头", "需公告验证"]
       }
     }
   ],
@@ -3259,20 +3598,22 @@ def build_llm_prompt(
 11. 单一社交媒体来源通常只能标为 `unverified` 或 `plausible`；只有多源或官方信息支持时才标为 `confirmed`
 12. `verification_status` 只能使用 `unverified`、`plausible`、`confirmed`、`superseded`、`rejected`
 13. `claim_type` 可使用 `fact`、`thesis`、`rumor`、`signal`；观点和推演不要写成事实
-14. 每个重要 claim 都应尽量带 `signal_evaluation`：`signal_type` 用 `new_fact`、`new_angle`、`repeat`、`noise`；`novelty_level` 用 `high`、`medium`、`low`、`none`；`evidence_strength` 用 `weak`、`single_source`、`multi_source`、`official`
+14. 每个重要 claim 都应尽量带 `signal_evaluation`：`signal_type` 用 `new_fact`、`new_angle`、`confirmation`、`repeat`、`noise`；`novelty_level` 用 `high`、`medium`、`low`、`none`；`evidence_strength` 用 `weak`、`single_source`、`multi_source`、`official`
 15. `memory_action` 用 `write`、`merge`、`skip`、`supersede`、`reject`；重复、噪音或无新增价值的信息应该使用 `skip` 或不进入结构化更新
-16. 同一事件簇可以共用 `cluster_id`，格式建议为 `xcluster:<主题>-<日期>`；没有把握时可以省略
-17. 对写入 `entity_updates` / `event_updates` / `macro_updates` 的重要 claim，尽量填写 `what_changed`、`changed_since`、`prior_claim_refs`，说明相对旧记忆或近期 run 变化在哪里
-18. `changed_since` 只能使用 `last_memory`、`recent_run`、`unknown`
-19. `alert_candidates` 只表示候选告警，不等于一定发送；只有 `watch`、`important`、`urgent` 才值得写入
-20. `contradictions` 只记录疑似冲突，不自动判定真假；`conflict_type` 用 `source_conflict`、`data_conflict`、`official_unverified`，`severity` 用 `low`、`medium`、`high`
-21. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
-22. 如果标的信息会改变投资假设，在对应 `entity_updates` 内嵌 `thesis_update`，维护 `bull_case`、`bear_case`、`key_watchpoints`、`invalidation_points`、`catalysts`、`thesis_status`
-23. `thesis_update.thesis_status` 用 `active`、`watch`、`strengthened`、`weakened`、`invalidated`、`superseded`；`direction` 用 `bull`、`bear`、`neutral`、`mixed`
-24. `event_updates` 用于会随时间发展的事件，按时间线追加
-25. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
-26. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度，可带 `source_profile.topic_strength`、`repeat_tendency`、`confirmation_required`
-27. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
+16. 先用 `event_clusters` 把同一件事合并成事件簇，再让 `entity_updates` / `event_updates` / `macro_updates` 引用同一个 `cluster_id`
+17. `cluster_id` 格式建议为 `xcluster:<主题>-<日期>`；同一事件被多账号转述时只能算一个 cluster
+18. 对写入 `entity_updates` / `event_updates` / `macro_updates` 的重要 claim，尽量填写 `what_changed`、`changed_since`、`prior_claim_refs`，说明相对旧记忆或近期 run 变化在哪里
+19. `changed_since` 只能使用 `last_memory`、`recent_run`、`unknown`
+20. `alert_candidates` 只表示候选告警，不等于一定发送；只有 `watch`、`important`、`urgent` 才值得写入
+21. `contradictions` 只记录疑似冲突，不自动判定真假；`conflict_type` 用 `source_conflict`、`data_conflict`、`official_unverified`，`severity` 用 `low`、`medium`、`high`
+22. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
+23. 如果标的信息会改变投资假设，在对应 `entity_updates` 内嵌 `thesis_update`，维护 `bull_case`、`bear_case`、`key_watchpoints`、`invalidation_points`、`catalysts`、`thesis_status`
+24. `thesis_update.thesis_status` 用 `active`、`watch`、`strengthened`、`weakened`、`invalidated`、`superseded`；`direction` 用 `bull`、`bear`、`neutral`、`mixed`
+25. `event_updates` 用于会随时间发展的事件，按时间线追加
+26. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
+27. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度；`source_profile` 优先使用 `source_type`、`topic_scores`、`repeat_tendency`、`repeat_rate`、`hit_rate`、`trust_score`、`valuable_count`、`confirmation_required`、`bias_tags`
+28. `source_type` 用 `primary`、`official`、`analyst`、`aggregator`、`trader`、`media`、`commentary`、`noise`；不确定用 `unknown`
+29. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
 {theme_hint}
 ## 历史上下文
 {history_context if history_context else "（首次运行，无历史数据）"}
@@ -3325,6 +3666,7 @@ def empty_memory_update() -> dict[str, Any]:
         "primary_themes": [],
         "secondary_themes": {},
         "account_notes": {},
+        "event_clusters": [],
         "signal_evaluations": [],
         "entity_updates": [],
         "event_updates": [],
@@ -3393,6 +3735,42 @@ def coerce_signal_evaluations(value: Any) -> list[dict[str, Any]]:
         if payload.get("cluster_id") is not None:
             payload["cluster_id"] = clean_text(payload.get("cluster_id"))
         normalized.append(payload)
+    return normalized
+
+
+def coerce_event_clusters(value: Any) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in coerce_dict_list(value):
+        payload = dict(item)
+        payload["cluster_id"] = stable_event_cluster_id(payload)
+        payload["title"] = clean_text(payload.get("title"))
+        payload["summary"] = clean_text(payload.get("summary"))
+        payload["theme"] = clean_text(
+            payload.get("theme") or payload.get("primary_theme")
+        )
+        payload["secondary_themes"] = coerce_string_list(
+            payload.get("secondary_themes")
+        )
+        payload["source_quality"] = clean_text(payload.get("source_quality"))
+        payload["signal_evaluation"] = build_signal_evaluation(payload)
+        payload["evidence_item_ids"] = coerce_string_list(
+            payload.get("evidence_item_ids")
+            or payload.get("tweet_ids")
+            or payload.get("item_ids")
+        )
+        payload["source_ids"] = coerce_string_list(payload.get("source_ids"))
+        payload["related_entity_ids"] = coerce_string_list(
+            payload.get("related_entity_ids")
+        )
+        payload["related_event_ids"] = coerce_string_list(
+            payload.get("related_event_ids")
+        )
+        payload["related_macro_ids"] = coerce_string_list(
+            payload.get("related_macro_ids")
+        )
+        payload["what_changed"] = clean_text(payload.get("what_changed"))
+        if payload["title"] or payload["summary"] or payload["evidence_item_ids"]:
+            normalized.append(payload)
     return normalized
 
 
@@ -3609,6 +3987,7 @@ def parse_memory_update(summary_text: str) -> dict[str, Any]:
             payload.get("secondary_themes")
         )
         parsed["account_notes"] = coerce_account_notes(payload.get("account_notes"))
+        parsed["event_clusters"] = coerce_event_clusters(payload.get("event_clusters"))
         parsed["signal_evaluations"] = coerce_signal_evaluations(
             payload.get("signal_evaluations")
         )
@@ -3628,6 +4007,7 @@ def parse_memory_update(summary_text: str) -> dict[str, Any]:
             parsed["primary_themes"]
             or parsed["secondary_themes"]
             or parsed["account_notes"]
+            or parsed["event_clusters"]
             or parsed["signal_evaluations"]
             or parsed["entity_updates"]
             or parsed["event_updates"]
@@ -3662,6 +4042,9 @@ def build_memory_update_id(
 
 
 async def collect(config_path: str) -> int:
+    collect_started_at_dt = utc_now()
+    collect_started_at = collect_started_at_dt.isoformat()
+    collect_started_monotonic = time.monotonic()
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -3760,6 +4143,7 @@ async def collect(config_path: str) -> int:
     run_id = timestamp_slug(now)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
     collected_at = now.isoformat()
+    runtime_seconds = time.monotonic() - collect_started_monotonic
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_paths = build_artifact_paths(output_dir, run_id)
     collector_batch = build_x_collector_batch(
@@ -3778,6 +4162,7 @@ async def collect(config_path: str) -> int:
         "collector_batch_schema": COLLECTOR_BATCH_SCHEMA_VERSION,
         "collector_item_schema": COLLECTOR_ITEM_SCHEMA_VERSION,
         "collector_batch_path": str(artifact_paths["collector_batch"]),
+        "run_metrics_path": str(artifact_paths["run_metrics"]),
         "account_results": [asdict(result) for result in fetch_results],
         "account_tweets": account_tweets,
         "recommendations": recommendations,
@@ -3789,6 +4174,19 @@ async def collect(config_path: str) -> int:
     atomic_write_text(artifact_paths["prompt"], prompt, encoding="utf-8")
     full_report = f"📊 X 监控报告 — {now_str}\n\n{raw_report}\n{discovery_section}"
     atomic_write_text(artifact_paths["report"], full_report, encoding="utf-8")
+    run_metrics = build_collect_run_metrics(
+        run_id=run_id,
+        started_at=collect_started_at,
+        finished_at=collected_at,
+        runtime_seconds=runtime_seconds,
+        accounts=accounts,
+        fetch_results=fetch_results,
+        all_tweets=all_tweets,
+        recommendations=recommendations,
+        keywords=keywords,
+        warning=warning,
+    )
+    atomic_write_json(artifact_paths["run_metrics"], run_metrics)
 
     warning_path: str | None = None
     if warning:
@@ -3808,6 +4206,7 @@ async def collect(config_path: str) -> int:
             "report": str(artifact_paths["report"]),
             "summary": str(artifact_paths["summary"]),
             "memory_update": str(artifact_paths["memory_update"]),
+            "run_metrics": str(artifact_paths["run_metrics"]),
             "memory_index": str(memory_store.index_path),
             "state": config["state_file"],
             "warning": warning_path,
@@ -3818,8 +4217,10 @@ async def collect(config_path: str) -> int:
             "new_tweet_count": len(all_tweets),
             "recommendation_count": len(recommendations),
             "keyword_count": len(keywords),
+            "runtime_seconds": round(runtime_seconds, 3),
         },
         "account_results": [asdict(result) for result in fetch_results],
+        "run_metrics": run_metrics,
         "memory_update_applied": False,
     }
     write_latest_manifest(latest_run_file, latest_payload)
@@ -3841,6 +4242,7 @@ async def collect(config_path: str) -> int:
     print(f"{'=' * 60}")
     print(f"\n📁 数据: {artifact_paths['data']}")
     print(f"📦 Collector Batch: {artifact_paths['collector_batch']}")
+    print(f"📈 Run Metrics: {artifact_paths['run_metrics']}")
     print(f"📝 Prompt: {artifact_paths['prompt']}")
     print(f"📄 报告: {artifact_paths['report']}")
     print(f"🧭 最新索引: {latest_run_file}")
@@ -3893,6 +4295,7 @@ def latest(config_path: str, field: str | None) -> int:
         "report",
         "summary",
         "memory_update",
+        "run_metrics",
         "warning",
     }:
         value = payload.get("paths", {}).get(field) or ""
@@ -3917,6 +4320,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         not parsed["primary_themes"]
         and not parsed["secondary_themes"]
         and not parsed["account_notes"]
+        and not parsed["event_clusters"]
         and not parsed["signal_evaluations"]
         and not parsed["entity_updates"]
         and not parsed["event_updates"]
@@ -4077,6 +4481,21 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         else output_dir / f"memory_update_{timestamp_slug()}.json"
     )
     memory_update_path.parent.mkdir(parents=True, exist_ok=True)
+    run_metrics_path = (
+        Path(latest_payload.get("paths", {}).get("run_metrics"))
+        if latest_payload.get("paths", {}).get("run_metrics")
+        else output_dir / f"run_metrics_{timestamp_slug()}.json"
+    )
+    run_metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_updates_total = (
+        theme_updates
+        + account_updates
+        + entity_updates
+        + event_updates
+        + macro_updates
+        + source_updates
+        + contradiction_updates
+    )
 
     payload = {
         "update_id": update_id,
@@ -4086,6 +4505,8 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "primary_themes": normalized_primary,
         "secondary_themes": normalized_secondary_mapping,
         "account_notes": parsed["account_notes"],
+        "event_clusters": parsed["event_clusters"],
+        "event_cluster_count": len(parsed["event_clusters"]),
         "signal_evaluations": parsed["signal_evaluations"],
         "entity_updates": parsed["entity_updates"],
         "event_updates": parsed["event_updates"],
@@ -4117,21 +4538,68 @@ def apply_memory(config_path: str, summary_file: str) -> int:
     }
     atomic_write_json(memory_update_path, payload)
 
+    run_metrics_payload = read_json_file(
+        run_metrics_path,
+        {
+            "schema_version": "signal-radar-run-metrics/v1",
+            "run_id": latest_payload.get("run_id"),
+            "status": "unknown",
+            "collector": {},
+        },
+    )
+    run_metrics_payload["schema_version"] = "signal-radar-run-metrics/v1"
+    run_metrics_payload["run_id"] = run_metrics_payload.get(
+        "run_id"
+    ) or latest_payload.get("run_id")
+    run_metrics_payload["updated_at"] = seen_at
+    run_metrics_payload["analysis"] = {
+        "memory_update_id": update_id,
+        "event_clusters": len(parsed["event_clusters"]),
+        "high_novelty_events": count_high_novelty_event_clusters(
+            parsed["event_clusters"]
+        ),
+        "signal_evaluations": len(parsed["signal_evaluations"]),
+        "high_novelty_signals": count_high_novelty_signals(
+            parsed["signal_evaluations"]
+        ),
+        "alert_candidates": len(parsed["alert_candidates"]),
+        "contradictions": len(parsed["contradictions"]),
+    }
+    run_metrics_payload["memory"] = {
+        "memory_updates": memory_updates_total,
+        "theme_updates": theme_updates,
+        "account_updates": account_updates,
+        "entity_updates": entity_updates,
+        "event_updates": event_updates,
+        "macro_updates": macro_updates,
+        "source_updates": source_updates,
+        "contradiction_updates": contradiction_updates,
+        "already_applied": payload["already_applied"],
+    }
+    atomic_write_json(run_metrics_path, run_metrics_payload)
+
     latest_payload.setdefault("paths", {})
     latest_payload["paths"]["summary"] = str(stored_summary_path)
     latest_payload["paths"]["memory_update"] = str(memory_update_path)
+    latest_payload["paths"]["run_metrics"] = str(run_metrics_path)
     latest_payload["paths"]["memory_index"] = str(memory_store.index_path)
     latest_payload["paths"]["state"] = config["state_file"]
     latest_payload["memory_backend"] = config["memory_backend"]
     latest_payload["memory_update_applied"] = True
     latest_payload["memory_update"] = payload
-    if "summary" not in latest_payload:
+    latest_payload["run_metrics"] = run_metrics_payload
+    if not isinstance(latest_payload.get("summary"), dict):
         latest_payload["summary"] = {}
+    latest_payload["summary"]["event_cluster_count"] = len(parsed["event_clusters"])
+    latest_payload["summary"]["high_novelty_event_count"] = (
+        count_high_novelty_event_clusters(parsed["event_clusters"])
+    )
     write_latest_manifest(latest_run_file, latest_payload)
 
     print(f"🧠 已更新记忆: {config['state_file']}")
     print(f"📝 Summary: {stored_summary_path}")
     print(f"📦 MEMORY_UPDATE: {memory_update_path}")
+    print(f"📈 Run Metrics: {run_metrics_path}")
     return 0
 
 
@@ -4158,6 +4626,7 @@ def build_parser() -> argparse.ArgumentParser:
             "report",
             "summary",
             "memory_update",
+            "run_metrics",
             "memory_dir",
             "memory_backend",
             "memory_index",

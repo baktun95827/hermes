@@ -104,6 +104,7 @@ collector 未来不应该只对应 X。它应该允许不同来源使用不同 t
 - `reports/collector_batch_<run_id>.json`
 - `reports/prompt_<run_id>.txt`
 - `reports/report_<run_id>.txt`
+- `reports/run_metrics_<run_id>.json`
 - 可选的 `reports/warning_<run_id>.txt`
 - `latest_run.json`
 - 更新后的 `memory/state.json`
@@ -164,9 +165,12 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `reports/report_<run_id>.txt`
 - `reports/summary_<run_id>.txt`
 - `reports/memory_update_<run_id>.json`
+- `reports/run_metrics_<run_id>.json`
 - `reports/warning_<run_id>.txt`
 
 它们很重要，但不是长期记忆的最终真源。
+
+`run_metrics_<run_id>.json` 是机器可读健康指标。`collect` 写入账号抓取、可见推文、新推文、warning 和运行耗时；`apply-memory` 回填事件簇、强增量事件、候选告警、冲突数和各类 memory 写入数。它用于判断“没有新信息”和“系统链路异常”之间的区别。
 
 #### 运行 manifest
 
@@ -188,12 +192,14 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `paths.report`
 - `paths.summary`
 - `paths.memory_update`
+- `paths.run_metrics`
 - `paths.memory_index`
 - `paths.state`
 - `paths.warning`
 - `paths.memory_dir`
 - `memory_backend`
 - `summary.new_tweet_count`
+- `summary.event_cluster_count`
 - `memory_update_applied`
 
 #### 长期记忆
@@ -265,6 +271,7 @@ local store 的职责是“保存状态并暴露清晰契约”，不是“替�
   - `primary_themes`
   - `secondary_themes`
   - `account_notes`
+  - `event_clusters`
   - `signal_evaluations`
   - `entity_updates`
   - `entity_updates[].thesis_update`
@@ -289,6 +296,7 @@ analyzer 应该只吃本地落地的数据。如果 analyzer 觉得材料不够�
 analyzer 至少应该回答这些问题：
 
 - 这轮真正新增了什么
+- 哪些推文应该被合并为同一个 `event_clusters`，避免同一事件多次污染摘要和 memory
 - 它们属于哪些一级主题
 - 各一级主题下应该记录哪些二级主题
 - 哪些账号画像需要更新
@@ -300,6 +308,7 @@ analyzer 至少应该回答这些问题：
 - 哪些持续事件需要按时间线进入 `event_updates`
 - 哪些宏观背景或趋势需要进入 `macro_updates`
 - 哪些来源可信度或确认要求需要更新到 `source_assessments`
+- 来源画像是否需要更新 `source_type`、`topic_scores`、`trust_score`、`repeat_rate`、`valuable_count` 或 `confirmation_required`
 - 哪些内容只是 `alert_candidates`，需要交给 digest / alerts 再决定是否发送
 - 哪些内容存在疑似冲突，应进入 `contradictions` 观察但不自动裁决真假
 - 哪些内容值得进入最终 digest

@@ -30,6 +30,7 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 - `collectors/x/source.yaml`: source definition template for the current X collector
 - `memory/state.json`: synced dedupe state (`seen_ids`, reliable `updated_at`, compatibility `last_run`)
 - `memory/index.json`: synced index of account/theme/entity/event/macro/source/contradiction memory files
+- `reports/run_metrics_<run-id>.json`: per-run health and analysis metrics, updated by `collect` and `apply-memory`
 - `references/local-codex-intro.md`: first-stop intro for a local Codex session; read this before patching if you need the project in one page
 - `references/architecture.md`: stable layer boundaries and contracts; read it before moving logic between collector, store, analyzer, and digest
 - `references/collector-schema.md`: unified collector batch/item contract for future multi-source ingestion
@@ -57,6 +58,7 @@ Multi-source note:
 - `registry.yaml` and `collectors/x/source.yaml` now define the source contract
 - current runtime is still X-first and enters through `monitor.py collect`
 - `collect` now also writes `collector_batch_<run_id>.json` in `collector-batch/v1` format
+- `collect` also writes `run_metrics_<run_id>.json`; `apply-memory` updates it with event cluster and memory write counts
 - these files are preparation for adding Reddit, 雪球, and other sources without rewriting the analyzer layer
 
 ## Setup
@@ -128,12 +130,13 @@ Generate a Chinese brief from that prompt with this output discipline:
 - Use `primary_themes` for stable一级主题
 - Use `secondary_themes` to map each一级主题 to more specific二级主题
 - Use `account_notes` with usernames as keys and no leading `@`
+- Use `event_clusters` to group multiple posts about the same event before writing claim updates
 - Use `signal_evaluations` and per-claim `signal_evaluation` to decide whether a signal is new, repeated, noise, worth writing, or worth alerting
 - Use `what_changed`, `changed_since`, and `prior_claim_refs` on accepted claim updates to explain the actual diff versus memory or the recent run
 - Use `entity_updates` for stocks, companies, sectors, and supply-chain objects; include `thesis_update` when a signal changes an investment thesis
 - Use `event_updates` for time-evolving events such as Iran/Hormuz
 - Use `macro_updates` for macro environment, liquidity, energy, and commodity trends
-- Use `source_assessments` for agent-maintained source notes
+- Use `source_assessments` for agent-maintained source notes and structured `source_profile`
 - Use `alert_candidates` for content alerts; the digest layer decides whether to send them
 - Use `contradictions` for suspected conflicts; record them as observations, not final truth decisions
 - Send only the content before `### MEMORY_UPDATE` to Telegram
@@ -150,6 +153,26 @@ Expected `MEMORY_UPDATE` shape:
   "account_notes": {
     "example_user": "经常发布半导体和AI基础设施链条观点，需要结合公告和新闻交叉确认。"
   },
+  "event_clusters": [
+    {
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "title": "液冷温控链条讨论升温",
+      "summary": "多个账号开始把英维克等温控标的与算力基础设施扩张联系起来，但仍缺少订单级验证。",
+      "theme": "个股/公司",
+      "secondary_themes": ["A股标的", "液冷/温控"],
+      "source_quality": "single_social_source",
+      "signal_type": "new_angle",
+      "novelty_level": "medium",
+      "evidence_strength": "single_source",
+      "memory_action": "write",
+      "alert_level": "watch",
+      "confidence": 0.55,
+      "what_changed": "相对旧记忆，本次新增的是温控业务弹性讨论开始和算力基础设施扩张绑定。",
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"],
+      "related_entity_ids": ["cn_equity:英维克"]
+    }
+  ],
   "signal_evaluations": [
     {
       "cluster_id": "xcluster:liquid-cooling-20260428",
@@ -204,7 +227,23 @@ Expected `MEMORY_UPDATE` shape:
   ],
   "event_updates": [],
   "macro_updates": [],
-  "source_assessments": [],
+  "source_assessments": [
+    {
+      "source_id": "x:example_user",
+      "assessment": "对AI基础设施链条有持续观点输出，但需要公告和新闻交叉确认。",
+      "source_profile": {
+        "source_type": "analyst",
+        "topic_scores": {"个股/公司": 0.7, "AI/算力": 0.6},
+        "repeat_tendency": "medium",
+        "repeat_rate": 0.4,
+        "hit_rate": 0.3,
+        "trust_score": 0.62,
+        "valuable_count": 3,
+        "confirmation_required": "high",
+        "bias_tags": ["产业链多头", "需公告验证"]
+      }
+    }
+  ],
   "alert_candidates": [],
   "contradictions": [
     {
@@ -246,18 +285,22 @@ python3 ~/.hermes/skills/signal-radar/monitor.py apply-memory --config ~/.hermes
 - `memory/sources/<source-id>.json`
 - `memory/contradictions/<contradiction-id>.json`
 - a structured `memory_update_*.json`
+- updated `run_metrics_*.json`
 - refreshed `latest_run.json`
 
 Behavior notes:
 
 - `apply-memory` is idempotent for the same summary input; rerunning it does not inflate theme counts
 - 一级主题和二级主题都会先经过 alias 归一化再写入 memory
+- `event_clusters` are recorded in `memory_update_*.json` and `run_metrics_*.json`; they group same-event posts but do not create long-run memory by themselves
 - structured updates with `verification_status: rejected`, explicit skip actions, `signal_type: noise`, `memory_action: skip|reject`, or no novelty are ignored
 - accepted claim updates store `cluster_id`, `signal_evaluation`, `what_changed`, `changed_since`, `prior_claim_refs`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend
 - accepted `entity_updates.thesis_update` entries are merged into the entity file's `theses` map; this keeps bull/bear cases, watchpoints, invalidation points, catalysts, and thesis status next to the related claims
+- accepted `source_assessments.source_profile` entries update structured source memory: `source_type`, `topic_scores`, `repeat_tendency`, `repeat_rate`, `hit_rate`, `trust_score`, `valuable_count`, `confirmation_required`, and `bias_tags`
 - `alert_candidates` are recorded in `memory_update_*.json`; sending them is a downstream digest/alert decision
 - `contradictions` are recorded under `memory/contradictions/` and indexed, but they do not automatically rewrite related entity, event, or macro memory conclusions
 - `latest --field memory_backend` returns the active memory backend; currently this should be `file`
+- `latest --field run_metrics` returns the per-run metrics artifact
 - `latest --field state` returns the synced state file path
 - when reading `memory/state.json`, prefer `updated_at` for the latest successful write time; `last_run` is kept for compatibility with older state consumers
 

@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 6,
   "updated_at": null,
   "account_count": 0,
   "theme_count": 0,
@@ -7,10 +7,12 @@
   "event_count": 0,
   "macro_count": 0,
   "source_count": 0,
+  "contradiction_count": 0,
   "accounts": {},
   "themes": {},
   "entities": {},
   "events": {},
   "macro": {},
-  "sources": {}
+  "sources": {},
+  "contradictions": {}
 }

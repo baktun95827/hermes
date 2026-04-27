@@ -266,6 +266,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
   "account_notes": {
     "elonmusk": "近期主要讨论政府效率、AI 和航天。"
   },
+  "event_clusters": [],
   "signal_evaluations": [],
   "entity_updates": [],
   "event_updates": [],
@@ -281,6 +282,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `primary_themes`：稳定的一级主题
 - `secondary_themes`：每个一级主题下的二级主题
 - `account_notes`：账号画像，key 使用不带 `@` 的用户名
+- `event_clusters`：同一事件的多条内容聚合层，只记录本轮事件簇，不直接写长期 memory
 - `signal_evaluations`：run 级或事件簇级价值判断，可记录新事实、新角度、复读或噪音
 - `entity_updates`：股票、公司、行业链条等对象的 claim 记忆；如果信息改变投资假设，可内嵌 `thesis_update`
 - `event_updates`：持续事件的时间线记忆，例如伊朗、霍尔木兹海峡
@@ -298,13 +300,26 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 
 `signal_evaluation` 是当前新增的价值判断核心，既可以出现在 `signal_evaluations`，也可以嵌入 `entity_updates`、`event_updates`、`macro_updates` 和 `alert_candidates`。核心字段包括：
 
-- `signal_type`: `new_fact`、`new_angle`、`repeat`、`noise`
+- `signal_type`: `new_fact`、`new_angle`、`confirmation`、`repeat`、`noise`
 - `novelty_level`: `high`、`medium`、`low`、`none`
 - `evidence_strength`: `weak`、`single_source`、`multi_source`、`official`
 - `memory_action`: `write`、`merge`、`skip`、`supersede`、`reject`
 - `alert_level`: `none`、`watch`、`important`、`urgent`
 
 `apply-memory` 会跳过 `signal_type: noise`、`novelty_level: none`、`memory_action: skip|reject` 或 `verification_status: rejected` 的结构化 claim。被接受的 claim 会在文件 backend 中保存 `cluster_id`、`signal_evaluation`、`last_valuable_at`、`status` 和可选 `decay_score`，这是后续 memory 衰减和污染控制的基础。
+
+`event_clusters` 是把“散推总结”升级成“按事件判断”的中间层。它建议包含：
+
+- `cluster_id`：例如 `xcluster:hormuz-shipping-20260428`
+- `title` / `summary`
+- `theme` / `secondary_themes`
+- `source_quality`
+- `signal_type` / `novelty_level` / `evidence_strength` / `memory_action`
+- `what_changed`
+- `evidence_item_ids` / `source_ids`
+- `related_entity_ids` / `related_event_ids` / `related_macro_ids`
+
+它本身不写入 `memory/events/`。只有对应的 `event_updates`、`entity_updates` 或 `macro_updates` 才会进入长期 memory。这样可以先压缩重复内容，再决定哪些 claim 值得沉淀。
 
 diff engine 的第一层字段已经进入 claim memory。`entity_updates`、`event_updates` 和 `macro_updates` 都可以带：
 
@@ -333,6 +348,16 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 - `severity`: `low`、`medium`、`high`
 - `related_entity_ids` / `related_event_ids` / `related_macro_ids` / `related_thesis_ids`
 - `evidence_item_ids` / `source_ids`
+
+`source_assessments.source_profile` 现在是结构化来源画像入口。推荐字段包括：
+
+- `source_type`: `primary`、`official`、`analyst`、`aggregator`、`trader`、`media`、`commentary`、`noise`
+- `topic_scores`: 按主题给 0 到 1 的强度评分
+- `repeat_tendency` / `repeat_rate`
+- `hit_rate` / `trust_score`
+- `valuable_count` / `last_valuable_at`
+- `confirmation_required`
+- `bias_tags`
 
 ### 5. 记忆结构、归一化与幂等
 
@@ -377,6 +402,7 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 - `primary_themes`
 - `secondary_themes`
 - `account_notes`
+- `event_clusters`
 - `signal_evaluations`
 - `entity_updates`
 - `event_updates`
@@ -396,12 +422,14 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 - `contradiction_updates_applied`
 - `already_applied`
 
+此外，`reports/run_metrics_*.json` 是每轮机器可读指标。`collect` 先写抓取健康指标，例如账号成功/失败、可见推文、新推文、warning 和运行耗时；`apply-memory` 再补分析指标，例如 `event_clusters`、`high_novelty_events`、候选告警、冲突数和实际 memory 写入数。它用于区分“真的没新信息”和“抓取/分析链路出问题”。
+
 ### 6. 索引、锁与原子写
 
 当前实现已经不是“直接覆写 JSON 文件”的脆弱模式，而是补上了几层工程保护：
 
 - **索引文件：** `memory/index.json` 汇总所有账号、主题、标的、事件、宏观、来源和疑似冲突文件，供快速遍历和跨机同步后恢复
-- **索引版本：** 当前 file backend 重建出的 `memory/index.json` 是 `version: 5`
+- **索引版本：** 当前 file backend 重建出的 `memory/index.json` 是 `version: 6`
 - **本地写锁：** `memory/.write.lock` 防止同一台机器上的并发任务同时写记忆
 - **原子写：** 关键 JSON/TXT 落盘通过“临时文件 + `os.replace`”完成，减少异常退出时的半截文件风险
 
@@ -488,6 +516,7 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 │   ├── report_YYYYMMDD_HHMMSS.txt    # 人类可读报告
 │   ├── summary_YYYYMMDD_HHMMSS.txt   # Hermes 生成的完整总结（含 MEMORY_UPDATE）
 │   ├── memory_update_YYYYMMDD_HHMMSS.json  # 解析后的记忆更新
+│   ├── run_metrics_YYYYMMDD_HHMMSS.json    # 每轮抓取、分析和 memory 写入指标
 │   └── warning_YYYYMMDD_HHMMSS.txt   # 告警（仅在异常时生成）
 └── debug_*.png             # 调试截图（仅在加载失败时生成）
 ```
@@ -509,6 +538,7 @@ python3 monitor.py collect --config config.yaml
 python3 monitor.py latest --config config.yaml --field new_tweet_count
 python3 monitor.py latest --config config.yaml --field collector_batch
 python3 monitor.py latest --config config.yaml --field prompt
+python3 monitor.py latest --config config.yaml --field run_metrics
 python3 monitor.py latest --config config.yaml --field warning
 python3 monitor.py latest --config config.yaml --field state
 ```
