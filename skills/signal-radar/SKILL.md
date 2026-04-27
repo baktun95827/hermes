@@ -29,7 +29,7 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 - `collectors/registry.yaml`: multi-source collector registry; contract-first for future sources like Reddit or 雪球
 - `collectors/x/source.yaml`: source definition template for the current X collector
 - `memory/state.json`: synced dedupe state (`seen_ids`, reliable `updated_at`, compatibility `last_run`)
-- `memory/index.json`: synced index of account/theme/entity/event/macro/source memory files
+- `memory/index.json`: synced index of account/theme/entity/event/macro/source/contradiction memory files
 - `references/local-codex-intro.md`: first-stop intro for a local Codex session; read this before patching if you need the project in one page
 - `references/architecture.md`: stable layer boundaries and contracts; read it before moving logic between collector, store, analyzer, and digest
 - `references/collector-schema.md`: unified collector batch/item contract for future multi-source ingestion
@@ -129,11 +129,13 @@ Generate a Chinese brief from that prompt with this output discipline:
 - Use `secondary_themes` to map each一级主题 to more specific二级主题
 - Use `account_notes` with usernames as keys and no leading `@`
 - Use `signal_evaluations` and per-claim `signal_evaluation` to decide whether a signal is new, repeated, noise, worth writing, or worth alerting
+- Use `what_changed`, `changed_since`, and `prior_claim_refs` on accepted claim updates to explain the actual diff versus memory or the recent run
 - Use `entity_updates` for stocks, companies, sectors, and supply-chain objects; include `thesis_update` when a signal changes an investment thesis
 - Use `event_updates` for time-evolving events such as Iran/Hormuz
 - Use `macro_updates` for macro environment, liquidity, energy, and commodity trends
 - Use `source_assessments` for agent-maintained source notes
 - Use `alert_candidates` for content alerts; the digest layer decides whether to send them
+- Use `contradictions` for suspected conflicts; record them as observations, not final truth decisions
 - Send only the content before `### MEMORY_UPDATE` to Telegram
 
 Expected `MEMORY_UPDATE` shape:
@@ -172,6 +174,9 @@ Expected `MEMORY_UPDATE` shape:
       "claim_type": "thesis",
       "verification_status": "plausible",
       "materiality": "medium",
+      "what_changed": "相对旧记忆，本次增量是市场开始把液冷业务弹性和算力基础设施扩张联系起来。",
+      "changed_since": "last_memory",
+      "prior_claim_refs": ["entity_claim:previous-liquid-cooling-demand"],
       "signal_evaluation": {
         "signal_type": "new_angle",
         "novelty_level": "medium",
@@ -200,7 +205,18 @@ Expected `MEMORY_UPDATE` shape:
   "event_updates": [],
   "macro_updates": [],
   "source_assessments": [],
-  "alert_candidates": []
+  "alert_candidates": [],
+  "contradictions": [
+    {
+      "claim": "某账号称英维克液冷订单正在加速释放。",
+      "conflicts_with": "另一来源称同类项目招标节奏放缓，且公司公告尚未验证订单加速。",
+      "conflict_type": "source_conflict",
+      "severity": "medium",
+      "related_entity_ids": ["cn_equity:英维克"],
+      "evidence_item_ids": ["x:123", "x:789"],
+      "source_ids": ["x:example_user", "x:other_source"]
+    }
+  ]
 }
 ```
 
@@ -228,6 +244,7 @@ python3 ~/.hermes/skills/signal-radar/monitor.py apply-memory --config ~/.hermes
 - `memory/events/<event-id>.json`
 - `memory/macro/<macro-id>.json`
 - `memory/sources/<source-id>.json`
+- `memory/contradictions/<contradiction-id>.json`
 - a structured `memory_update_*.json`
 - refreshed `latest_run.json`
 
@@ -236,9 +253,10 @@ Behavior notes:
 - `apply-memory` is idempotent for the same summary input; rerunning it does not inflate theme counts
 - 一级主题和二级主题都会先经过 alias 归一化再写入 memory
 - structured updates with `verification_status: rejected`, explicit skip actions, `signal_type: noise`, `memory_action: skip|reject`, or no novelty are ignored
-- accepted claim updates store `cluster_id`, `signal_evaluation`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend
+- accepted claim updates store `cluster_id`, `signal_evaluation`, `what_changed`, `changed_since`, `prior_claim_refs`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend
 - accepted `entity_updates.thesis_update` entries are merged into the entity file's `theses` map; this keeps bull/bear cases, watchpoints, invalidation points, catalysts, and thesis status next to the related claims
 - `alert_candidates` are recorded in `memory_update_*.json`; sending them is a downstream digest/alert decision
+- `contradictions` are recorded under `memory/contradictions/` and indexed, but they do not automatically rewrite related entity, event, or macro memory conclusions
 - `latest --field memory_backend` returns the active memory backend; currently this should be `file`
 - `latest --field state` returns the synced state file path
 - when reading `memory/state.json`, prefer `updated_at` for the latest successful write time; `last_run` is kept for compatibility with older state consumers

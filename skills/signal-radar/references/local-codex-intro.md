@@ -20,8 +20,8 @@ collect -> local store -> analyzer -> apply-memory
 - 当前只实现 `memory_backend: file`，`memory/` 是 file backend 的本地目录，建议随 Git 同步
 - `cookies.json`、`reports/`、`latest_run.json` 不应提交
 - `memory/state.json` 里 `updated_at` 是当前更可靠的状态写入时间，`last_run` 主要保留给旧消费者兼容使用
-- 记忆模型已经从宽泛主题扩展为 claim-driven memory，可维护标的、事件、宏观和来源评价
-- `MEMORY_UPDATE` 现在也承载价值判断：`signal_evaluation`、`cluster_id`、`alert_candidates`
+- 记忆模型已经从宽泛主题扩展为 claim-driven memory，可维护标的、事件、宏观、来源评价和疑似冲突
+- `MEMORY_UPDATE` 现在也承载价值判断和 diff：`signal_evaluation`、`cluster_id`、`what_changed`、`contradictions`、`alert_candidates`
 
 ## 当前最重要的文件
 
@@ -80,9 +80,10 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 - 持续事件记忆在 `memory/events/`
 - 宏观趋势记忆在 `memory/macro/`
 - 来源评价记忆在 `memory/sources/`
+- 疑似冲突观察在 `memory/contradictions/`
 - 标准化 batch 产物是 `collector_batch_<run_id>.json`
 - 统一 schema 是 `collector-batch/v1` 和 `collector-item/v1`
-- 结构化记忆更新可以包含 `signal_evaluations`、各 claim 的 `signal_evaluation`、标的内嵌 `thesis_update`、以及只供下游判断的 `alert_candidates`
+- 结构化记忆更新可以包含 `signal_evaluations`、各 claim 的 `signal_evaluation`、diff 字段、标的内嵌 `thesis_update`、疑似 `contradictions`、以及只供下游判断的 `alert_candidates`
 
 ## 你改代码时最容易踩的坑
 
@@ -93,6 +94,7 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 - 不要让业务逻辑依赖“文件路径就是业务模型”；依赖 `MEMORY_UPDATE` 和 memory backend 边界
 - 不要把未经验证的社交媒体观点写成 `confirmed`
 - 不要把复读或噪音信号写进长期 memory；应使用 `signal_type: repeat|noise` 或 `memory_action: skip`
+- 不要把 `contradictions` 当成事实裁决；它只是冲突观察，后续还需要验证
 - 不要把普通新闻都写成 thesis；只有信息改变 bull/bear case、关键验证点、证伪条件或催化时间表时才写 `thesis_update`
 - 不要把 analyzer 重新耦合回浏览器流程
 - 如果只是要接新 source，优先补 `collectors/<source>/source.yaml` 和标准化输出，不要先改摘要层

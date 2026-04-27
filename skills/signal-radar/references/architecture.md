@@ -207,9 +207,10 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `memory/events/<event-id>.json`
 - `memory/macro/<macro-id>.json`
 - `memory/sources/<source-id>.json`
+- `memory/contradictions/<contradiction-id>.json`
 - `memory/index.json`
 
-`accounts/` 和 `themes/` 保留原有账号画像与宽泛主题记忆。`entities/`、`events/`、`macro/` 和 `sources/` 用于金融/地缘场景下的 claim-driven memory，详细契约见 `references/memory-schema.md`。
+`accounts/` 和 `themes/` 保留原有账号画像与宽泛主题记忆。`entities/`、`events/`、`macro/`、`sources/` 和 `contradictions/` 用于金融/地缘场景下的 claim-driven memory，详细契约见 `references/memory-schema.md`。
 
 这里的关键边界是：业务层依赖 `MemoryBackend` 和 `MEMORY_UPDATE` contract，而不是依赖文件路径本身。当前只实现 `FileMemoryStore`，未来如果需要 Postgres，应新增 backend 实现，不应改 analyzer 输出协议。
 
@@ -271,6 +272,7 @@ local store 的职责是“保存状态并暴露清晰契约”，不是“替�
   - `macro_updates`
   - `source_assessments`
   - `alert_candidates`
+  - `contradictions`
 
 ### 不应该负责什么
 
@@ -292,12 +294,14 @@ analyzer 至少应该回答这些问题：
 - 哪些账号画像需要更新
 - 哪些内容是新事实、新角度、复读或噪音
 - 每个重要信号的 `novelty_level`、`evidence_strength`、`memory_action` 和 `alert_level` 应该是什么
+- 每个重要 claim 相对旧记忆或近期 run 的 `what_changed`、`changed_since` 和 `prior_claim_refs` 是什么
 - 哪些金融标的、公司、行业链条 claim 值得进入 `entity_updates`
 - 哪些标的信息改变了 bull/bear thesis、关键验证点、证伪条件或催化时间表
 - 哪些持续事件需要按时间线进入 `event_updates`
 - 哪些宏观背景或趋势需要进入 `macro_updates`
 - 哪些来源可信度或确认要求需要更新到 `source_assessments`
 - 哪些内容只是 `alert_candidates`，需要交给 digest / alerts 再决定是否发送
+- 哪些内容存在疑似冲突，应进入 `contradictions` 观察但不自动裁决真假
 - 哪些内容值得进入最终 digest
 
 它不应该机械地把每条推文都重复一遍。

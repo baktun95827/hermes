@@ -86,6 +86,14 @@ MEMORY_ACTIONS = {
     "unknown",
 }
 ALERT_LEVELS = {"none", "watch", "important", "urgent"}
+CHANGED_SINCE_VALUES = {"last_memory", "recent_run", "unknown"}
+CONFLICT_TYPES = {
+    "source_conflict",
+    "data_conflict",
+    "official_unverified",
+    "unknown",
+}
+CONTRADICTION_SEVERITIES = {"low", "medium", "high", "unknown"}
 THESIS_DIRECTIONS = {"bull", "bear", "neutral", "mixed", "unknown"}
 THESIS_STATUSES = {
     "active",
@@ -200,6 +208,44 @@ def normalize_alert_level(value: Any) -> str:
     }
     level = aliases.get(level, level)
     return level if level in ALERT_LEVELS else "none"
+
+
+def normalize_changed_since(value: Any) -> str:
+    changed_since = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "memory": "last_memory",
+        "previous_memory": "last_memory",
+        "last": "last_memory",
+        "run": "recent_run",
+        "latest_run": "recent_run",
+        "unknown_change": "unknown",
+    }
+    changed_since = aliases.get(changed_since, changed_since)
+    return changed_since if changed_since in CHANGED_SINCE_VALUES else "unknown"
+
+
+def normalize_conflict_type(value: Any) -> str:
+    conflict_type = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "source": "source_conflict",
+        "sources": "source_conflict",
+        "data": "data_conflict",
+        "official": "official_unverified",
+        "unverified_official": "official_unverified",
+    }
+    conflict_type = aliases.get(conflict_type, conflict_type)
+    return conflict_type if conflict_type in CONFLICT_TYPES else "unknown"
+
+
+def normalize_contradiction_severity(value: Any) -> str:
+    severity = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "watch": "low",
+        "important": "medium",
+        "urgent": "high",
+    }
+    severity = aliases.get(severity, severity)
+    return severity if severity in CONTRADICTION_SEVERITIES else "unknown"
 
 
 def normalize_thesis_direction(value: Any) -> str:
@@ -348,6 +394,34 @@ def stable_claim_id(prefix: str, update: dict[str, Any], scope_keys: list[str]) 
         json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     return f"{prefix}_{digest[:16]}"
+
+
+def build_diff_context(update: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "what_changed": clean_text(update.get("what_changed")),
+        "changed_since": normalize_changed_since(update.get("changed_since")),
+        "prior_claim_refs": coerce_string_list(update.get("prior_claim_refs")),
+    }
+
+
+def stable_contradiction_id(update: dict[str, Any]) -> str:
+    raw_contradiction_id = clean_text(update.get("contradiction_id") or update.get("id"))
+    if raw_contradiction_id:
+        return safe_filename(raw_contradiction_id)
+
+    identity = {
+        "claim": clean_text(update.get("claim") or update.get("summary")),
+        "conflicts_with": clean_text(
+            update.get("conflicts_with") or update.get("conflict")
+        ),
+        "conflict_type": normalize_conflict_type(update.get("conflict_type")),
+        "related_entity_ids": coerce_string_list(update.get("related_entity_ids")),
+        "related_event_ids": coerce_string_list(update.get("related_event_ids")),
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"contradiction_{digest[:16]}"
 
 
 def stable_thesis_id(
@@ -959,6 +1033,14 @@ class MemoryBackend(Protocol):
     ) -> bool:
         ...
 
+    def update_contradiction_memory(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        ...
+
     def get_account_notes(self) -> dict[str, str]:
         ...
 
@@ -989,6 +1071,7 @@ class FileMemoryStore:
         self.events_dir = self.root / "events"
         self.macro_dir = self.root / "macro"
         self.sources_dir = self.root / "sources"
+        self.contradictions_dir = self.root / "contradictions"
         self.index_path = self.root / "index.json"
         self.lock_path = self.root / ".write.lock"
         self.normalizer = normalizer or ThemeNormalizer()
@@ -1000,6 +1083,7 @@ class FileMemoryStore:
         self.events_dir.mkdir(parents=True, exist_ok=True)
         self.macro_dir.mkdir(parents=True, exist_ok=True)
         self.sources_dir.mkdir(parents=True, exist_ok=True)
+        self.contradictions_dir.mkdir(parents=True, exist_ok=True)
 
     def _read_json(self, path: Path, default: dict[str, Any]) -> dict[str, Any]:
         if path.exists():
@@ -1075,6 +1159,9 @@ class FileMemoryStore:
 
     def source_path(self, source_id: str) -> Path:
         return self.sources_dir / f"{safe_filename(source_id)}.json"
+
+    def contradiction_path(self, contradiction_id: str) -> Path:
+        return self.contradictions_dir / f"{safe_filename(contradiction_id)}.json"
 
     def migrate_legacy_state(self, state: StateManager) -> bool:
         changed = False
@@ -1329,6 +1416,7 @@ class FileMemoryStore:
         )
         signal_evaluation = build_signal_evaluation(update)
         cluster_id = clean_text(update.get("cluster_id"))
+        diff_context = build_diff_context(update)
         thesis_update = build_embedded_thesis_update(
             update=update,
             entity_id=entity_id,
@@ -1346,6 +1434,9 @@ class FileMemoryStore:
             "claim": claim,
             "claim_type": clean_text(update.get("claim_type")) or "signal",
             "thesis_ids": [thesis_update["thesis_id"]] if thesis_update else [],
+            "what_changed": diff_context["what_changed"],
+            "changed_since": diff_context["changed_since"],
+            "prior_claim_refs": diff_context["prior_claim_refs"],
             "verification_status": normalize_verification_status(
                 update.get("verification_status")
             ),
@@ -1476,10 +1567,14 @@ class FileMemoryStore:
         status = normalize_verification_status(update.get("verification_status"))
         signal_evaluation = build_signal_evaluation(update)
         cluster_id = clean_text(update.get("cluster_id"))
+        diff_context = build_diff_context(update)
         claims[claim_id] = {
             "claim_id": claim_id,
             "cluster_id": cluster_id,
             "claim": claim,
+            "what_changed": diff_context["what_changed"],
+            "changed_since": diff_context["changed_since"],
+            "prior_claim_refs": diff_context["prior_claim_refs"],
             "verification_status": status,
             "confidence": update.get("confidence"),
             "importance": clean_text(update.get("importance")),
@@ -1501,6 +1596,9 @@ class FileMemoryStore:
                 "claim_id": claim_id,
                 "cluster_id": cluster_id,
                 "claim": claim,
+                "what_changed": diff_context["what_changed"],
+                "changed_since": diff_context["changed_since"],
+                "prior_claim_refs": diff_context["prior_claim_refs"],
                 "verification_status": status,
                 "importance": clean_text(update.get("importance")),
                 "signal_evaluation": signal_evaluation,
@@ -1595,10 +1693,14 @@ class FileMemoryStore:
         status = normalize_verification_status(update.get("verification_status"))
         signal_evaluation = build_signal_evaluation(update)
         cluster_id = clean_text(update.get("cluster_id"))
+        diff_context = build_diff_context(update)
         claims[claim_id] = {
             "claim_id": claim_id,
             "cluster_id": cluster_id,
             "claim": claim,
+            "what_changed": diff_context["what_changed"],
+            "changed_since": diff_context["changed_since"],
+            "prior_claim_refs": diff_context["prior_claim_refs"],
             "verification_status": status,
             "confidence": update.get("confidence"),
             "time_horizon": clean_text(update.get("time_horizon")),
@@ -1621,6 +1723,9 @@ class FileMemoryStore:
                 "claim_id": claim_id,
                 "cluster_id": cluster_id,
                 "claim": claim,
+                "what_changed": diff_context["what_changed"],
+                "changed_since": diff_context["changed_since"],
+                "prior_claim_refs": diff_context["prior_claim_refs"],
                 "verification_status": status,
                 "time_horizon": clean_text(update.get("time_horizon")),
                 "materiality": clean_text(update.get("materiality")),
@@ -1790,6 +1895,142 @@ class FileMemoryStore:
         self._write_json(path, payload)
         return True
 
+    def update_contradiction_memory(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+    ) -> bool:
+        if normalize_memory_action(update.get("memory_action") or update.get("action")) in {
+            "skip",
+            "reject",
+        }:
+            return False
+
+        claim = clean_text(update.get("claim") or update.get("summary"))
+        conflicts_with = clean_text(
+            update.get("conflicts_with") or update.get("conflict")
+        )
+        if not claim or not conflicts_with:
+            return False
+
+        contradiction_id = stable_contradiction_id(update)
+        entry_update_id = f"{update_id}:{contradiction_id}"
+        path = self.contradiction_path(contradiction_id)
+        payload = self._read_json(
+            path,
+            {
+                "schema_version": "contradiction-memory/v1",
+                "contradiction_id": contradiction_id,
+                "title": clean_text(update.get("title")) or claim[:80],
+                "claim": claim,
+                "conflicts_with": conflicts_with,
+                "conflict_type": normalize_conflict_type(update.get("conflict_type")),
+                "severity": normalize_contradiction_severity(update.get("severity")),
+                "status": clean_text(update.get("status")) or "open",
+                "created_at": seen_at,
+                "updated_at": seen_at,
+                "evidence_item_ids": [],
+                "source_ids": [],
+                "related_entity_ids": [],
+                "related_event_ids": [],
+                "related_macro_ids": [],
+                "related_thesis_ids": [],
+                "history": [],
+                "applied_update_ids": [],
+                "last_update_id": None,
+            },
+        )
+        applied_update_ids = payload.get("applied_update_ids", [])
+        if not isinstance(applied_update_ids, list):
+            applied_update_ids = []
+        if entry_update_id in applied_update_ids:
+            return False
+
+        evidence_item_ids = unique_preserving_order(
+            coerce_string_list(payload.get("evidence_item_ids"))
+            + coerce_string_list(update.get("evidence_item_ids"))
+        )
+        source_ids = unique_preserving_order(
+            coerce_string_list(payload.get("source_ids"))
+            + coerce_string_list(update.get("source_ids"))
+        )
+        related_entity_ids = unique_preserving_order(
+            coerce_string_list(payload.get("related_entity_ids"))
+            + coerce_string_list(update.get("related_entity_ids"))
+        )
+        related_event_ids = unique_preserving_order(
+            coerce_string_list(payload.get("related_event_ids"))
+            + coerce_string_list(update.get("related_event_ids"))
+        )
+        related_macro_ids = unique_preserving_order(
+            coerce_string_list(payload.get("related_macro_ids"))
+            + coerce_string_list(update.get("related_macro_ids"))
+        )
+        related_thesis_ids = unique_preserving_order(
+            coerce_string_list(payload.get("related_thesis_ids"))
+            + coerce_string_list(update.get("related_thesis_ids"))
+        )
+        conflict_type = normalize_conflict_type(update.get("conflict_type"))
+        severity = normalize_contradiction_severity(update.get("severity"))
+        signal_evaluation = build_signal_evaluation(update)
+        history = payload.get("history", [])
+        if not isinstance(history, list):
+            history = []
+        history.append(
+            {
+                "time": seen_at,
+                "update_id": update_id,
+                "claim": claim,
+                "conflicts_with": conflicts_with,
+                "conflict_type": conflict_type,
+                "severity": severity,
+                "status": clean_text(update.get("status")) or "open",
+                "notes": clean_text(update.get("notes") or update.get("reason")),
+                "signal_evaluation": signal_evaluation,
+                "evidence_item_ids": evidence_item_ids,
+                "source_ids": source_ids,
+            }
+        )
+
+        payload.update(
+            {
+                "schema_version": "contradiction-memory/v1",
+                "contradiction_id": contradiction_id,
+                "title": clean_text(update.get("title"))
+                or payload.get("title")
+                or claim[:80],
+                "claim": claim,
+                "conflicts_with": conflicts_with,
+                "conflict_type": (
+                    conflict_type
+                    if conflict_type != "unknown"
+                    else payload.get("conflict_type") or "unknown"
+                ),
+                "severity": (
+                    severity
+                    if severity != "unknown"
+                    else payload.get("severity") or "unknown"
+                ),
+                "status": clean_text(update.get("status"))
+                or payload.get("status")
+                or "open",
+                "updated_at": seen_at,
+                "evidence_item_ids": evidence_item_ids,
+                "source_ids": source_ids,
+                "related_entity_ids": related_entity_ids,
+                "related_event_ids": related_event_ids,
+                "related_macro_ids": related_macro_ids,
+                "related_thesis_ids": related_thesis_ids,
+                "latest_signal_evaluation": signal_evaluation,
+                "history": history[-50:],
+                "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
+                "last_update_id": update_id,
+            }
+        )
+        self._write_json(path, payload)
+        return True
+
     def get_account_notes(self) -> dict[str, str]:
         notes: dict[str, str] = {}
         if not self.accounts_dir.exists():
@@ -1844,6 +2085,7 @@ class FileMemoryStore:
             claim_ids = coerce_string_list(payload.get("recent_claim_ids"))[-3:]
             claims = payload.get("claims", {})
             claim_texts: list[str] = []
+            change_texts: list[str] = []
             if isinstance(claims, dict):
                 for claim_id in claim_ids:
                     claim_payload = claims.get(claim_id, {})
@@ -1851,6 +2093,9 @@ class FileMemoryStore:
                         claim = clean_text(claim_payload.get("claim"))
                         if claim:
                             claim_texts.append(claim)
+                        what_changed = clean_text(claim_payload.get("what_changed"))
+                        if what_changed:
+                            change_texts.append(what_changed)
             thesis_ids = coerce_string_list(payload.get("recent_thesis_ids"))[-3:]
             theses = payload.get("theses", {})
             thesis_texts: list[str] = []
@@ -1872,6 +2117,7 @@ class FileMemoryStore:
                     "entity_type": clean_text(payload.get("entity_type")),
                     "updated_at": clean_text(payload.get("updated_at")),
                     "recent_claims": claim_texts,
+                    "recent_changes": change_texts,
                     "recent_theses": thesis_texts,
                 }
             )
@@ -1888,17 +2134,22 @@ class FileMemoryStore:
             if not isinstance(timeline, list):
                 timeline = []
             recent = []
+            changes = []
             for item in timeline[-3:]:
                 if isinstance(item, dict):
                     claim = clean_text(item.get("claim"))
                     if claim:
                         recent.append(claim)
+                    what_changed = clean_text(item.get("what_changed"))
+                    if what_changed:
+                        changes.append(what_changed)
             memories.append(
                 {
                     "event_id": clean_text(payload.get("event_id")),
                     "title": clean_text(payload.get("title")),
                     "updated_at": clean_text(payload.get("updated_at")),
                     "recent_claims": recent,
+                    "recent_changes": changes,
                 }
             )
         memories.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
@@ -1914,17 +2165,22 @@ class FileMemoryStore:
             if not isinstance(observations, list):
                 observations = []
             recent = []
+            changes = []
             for item in observations[-3:]:
                 if isinstance(item, dict):
                     claim = clean_text(item.get("claim"))
                     if claim:
                         recent.append(claim)
+                    what_changed = clean_text(item.get("what_changed"))
+                    if what_changed:
+                        changes.append(what_changed)
             memories.append(
                 {
                     "macro_id": clean_text(payload.get("macro_id")),
                     "topic": clean_text(payload.get("topic")),
                     "updated_at": clean_text(payload.get("updated_at")),
                     "recent_claims": recent,
+                    "recent_changes": changes,
                 }
             )
         memories.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
@@ -2032,8 +2288,25 @@ class FileMemoryStore:
                 "repeat_tendency": payload.get("repeat_tendency"),
             }
 
+        contradictions: dict[str, Any] = {}
+        for path in sorted(self.contradictions_dir.glob("*.json")):
+            payload = self._read_json(path, {})
+            contradiction_id = clean_text(payload.get("contradiction_id"))
+            if not contradiction_id:
+                continue
+            contradictions[contradiction_id] = {
+                "file": str(path.relative_to(self.root)),
+                "updated_at": payload.get("updated_at"),
+                "status": payload.get("status"),
+                "severity": payload.get("severity"),
+                "conflict_type": payload.get("conflict_type"),
+                "claim": payload.get("claim"),
+                "related_entity_ids": payload.get("related_entity_ids", []),
+                "related_event_ids": payload.get("related_event_ids", []),
+            }
+
         index_payload = {
-            "version": 4,
+            "version": 5,
             "updated_at": utc_now().isoformat(),
             "account_count": len(accounts),
             "theme_count": len(themes),
@@ -2041,12 +2314,14 @@ class FileMemoryStore:
             "event_count": len(events),
             "macro_count": len(macro),
             "source_count": len(sources),
+            "contradiction_count": len(contradictions),
             "accounts": accounts,
             "themes": themes,
             "entities": entities,
             "events": events,
             "macro": macro,
             "sources": sources,
+            "contradictions": contradictions,
         }
         self._write_json(self.index_path, index_payload)
 
@@ -2780,11 +3055,14 @@ def build_llm_prompt(
         history_context += "\n近期标的/公司记忆:\n"
         for item in recent_entity_memories:
             claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
+            changes = "；".join(item.get("recent_changes") or [])
             theses = "；".join(item.get("recent_theses") or [])
             history_context += (
                 f"  - {item['display_name'] or item['entity_id']}"
                 f" [{item.get('entity_type') or 'unknown'}]: {claims}\n"
             )
+            if changes:
+                history_context += f"    recent changes: {changes}\n"
             if theses:
                 history_context += f"    thesis: {theses}\n"
     if recent_event_memories:
@@ -2792,11 +3070,17 @@ def build_llm_prompt(
         for item in recent_event_memories:
             claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
             history_context += f"  - {item['title'] or item['event_id']}: {claims}\n"
+            changes = "；".join(item.get("recent_changes") or [])
+            if changes:
+                history_context += f"    recent changes: {changes}\n"
     if recent_macro_memories:
         history_context += "\n近期宏观记忆:\n"
         for item in recent_macro_memories:
             claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
             history_context += f"  - {item['topic'] or item['macro_id']}: {claims}\n"
+            changes = "；".join(item.get("recent_changes") or [])
+            if changes:
+                history_context += f"    recent changes: {changes}\n"
 
     theme_hint = ""
     if predefined_themes:
@@ -2840,6 +3124,9 @@ def build_llm_prompt(
       "claim_type": "thesis",
       "verification_status": "plausible",
       "materiality": "medium",
+      "what_changed": "相对旧记忆，本次增量是市场开始把液冷业务弹性和算力基础设施扩张联系起来。",
+      "changed_since": "last_memory",
+      "prior_claim_refs": ["entity_claim:previous-liquid-cooling-demand"],
       "signal_evaluation": {
         "signal_type": "new_angle",
         "novelty_level": "medium",
@@ -2877,6 +3164,9 @@ def build_llm_prompt(
       "claim": "社交媒体开始交易海峡航运受阻风险，可能影响原油和航运资产预期。",
       "verification_status": "unverified",
       "importance": "high",
+      "what_changed": "相对近期事件记忆，讨论焦点从地缘言论升级为航运受阻和油价影响。",
+      "changed_since": "recent_run",
+      "prior_claim_refs": [],
       "signal_evaluation": {
         "signal_type": "new_fact",
         "novelty_level": "high",
@@ -2910,6 +3200,17 @@ def build_llm_prompt(
       "related_entity_ids": ["cn_equity:英维克"],
       "evidence_item_ids": ["x:123"],
       "source_ids": ["x:example_user"]
+    }
+  ],
+  "contradictions": [
+    {
+      "claim": "某账号称英维克液冷订单正在加速释放。",
+      "conflicts_with": "另一来源称同类项目招标节奏放缓，且公司公告尚未验证订单加速。",
+      "conflict_type": "source_conflict",
+      "severity": "medium",
+      "related_entity_ids": ["cn_equity:英维克"],
+      "evidence_item_ids": ["x:123", "x:789"],
+      "source_ids": ["x:example_user", "x:other_source"]
     }
   ]
 }
@@ -2961,14 +3262,17 @@ def build_llm_prompt(
 14. 每个重要 claim 都应尽量带 `signal_evaluation`：`signal_type` 用 `new_fact`、`new_angle`、`repeat`、`noise`；`novelty_level` 用 `high`、`medium`、`low`、`none`；`evidence_strength` 用 `weak`、`single_source`、`multi_source`、`official`
 15. `memory_action` 用 `write`、`merge`、`skip`、`supersede`、`reject`；重复、噪音或无新增价值的信息应该使用 `skip` 或不进入结构化更新
 16. 同一事件簇可以共用 `cluster_id`，格式建议为 `xcluster:<主题>-<日期>`；没有把握时可以省略
-17. `alert_candidates` 只表示候选告警，不等于一定发送；只有 `watch`、`important`、`urgent` 才值得写入
-18. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
-19. 如果标的信息会改变投资假设，在对应 `entity_updates` 内嵌 `thesis_update`，维护 `bull_case`、`bear_case`、`key_watchpoints`、`invalidation_points`、`catalysts`、`thesis_status`
-20. `thesis_update.thesis_status` 用 `active`、`watch`、`strengthened`、`weakened`、`invalidated`、`superseded`；`direction` 用 `bull`、`bear`、`neutral`、`mixed`
-21. `event_updates` 用于会随时间发展的事件，按时间线追加
-22. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
-23. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度，可带 `source_profile.topic_strength`、`repeat_tendency`、`confirmation_required`
-24. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
+17. 对写入 `entity_updates` / `event_updates` / `macro_updates` 的重要 claim，尽量填写 `what_changed`、`changed_since`、`prior_claim_refs`，说明相对旧记忆或近期 run 变化在哪里
+18. `changed_since` 只能使用 `last_memory`、`recent_run`、`unknown`
+19. `alert_candidates` 只表示候选告警，不等于一定发送；只有 `watch`、`important`、`urgent` 才值得写入
+20. `contradictions` 只记录疑似冲突，不自动判定真假；`conflict_type` 用 `source_conflict`、`data_conflict`、`official_unverified`，`severity` 用 `low`、`medium`、`high`
+21. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
+22. 如果标的信息会改变投资假设，在对应 `entity_updates` 内嵌 `thesis_update`，维护 `bull_case`、`bear_case`、`key_watchpoints`、`invalidation_points`、`catalysts`、`thesis_status`
+23. `thesis_update.thesis_status` 用 `active`、`watch`、`strengthened`、`weakened`、`invalidated`、`superseded`；`direction` 用 `bull`、`bear`、`neutral`、`mixed`
+24. `event_updates` 用于会随时间发展的事件，按时间线追加
+25. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
+26. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度，可带 `source_profile.topic_strength`、`repeat_tendency`、`confirmation_required`
+27. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
 {theme_hint}
 ## 历史上下文
 {history_context if history_context else "（首次运行，无历史数据）"}
@@ -3027,6 +3331,7 @@ def empty_memory_update() -> dict[str, Any]:
         "macro_updates": [],
         "source_assessments": [],
         "alert_candidates": [],
+        "contradictions": [],
     }
 
 
@@ -3110,6 +3415,45 @@ def coerce_alert_candidates(value: Any) -> list[dict[str, Any]]:
         )
         payload["source_ids"] = coerce_string_list(payload.get("source_ids"))
         if payload["title"] or payload["reason"]:
+            normalized.append(payload)
+    return normalized
+
+
+def coerce_contradictions(value: Any) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in coerce_dict_list(value):
+        payload = dict(item)
+        payload["claim"] = clean_text(payload.get("claim") or payload.get("summary"))
+        payload["conflicts_with"] = clean_text(
+            payload.get("conflicts_with") or payload.get("conflict")
+        )
+        payload["conflict_type"] = normalize_conflict_type(
+            payload.get("conflict_type")
+        )
+        payload["severity"] = normalize_contradiction_severity(
+            payload.get("severity")
+        )
+        payload["evidence_item_ids"] = coerce_string_list(
+            payload.get("evidence_item_ids")
+        )
+        payload["source_ids"] = coerce_string_list(payload.get("source_ids"))
+        payload["related_entity_ids"] = coerce_string_list(
+            payload.get("related_entity_ids")
+        )
+        payload["related_event_ids"] = coerce_string_list(
+            payload.get("related_event_ids")
+        )
+        payload["related_macro_ids"] = coerce_string_list(
+            payload.get("related_macro_ids")
+        )
+        payload["related_thesis_ids"] = coerce_string_list(
+            payload.get("related_thesis_ids")
+        )
+        payload["memory_action"] = normalize_memory_action(
+            payload.get("memory_action") or payload.get("action")
+        )
+        payload["signal_evaluation"] = build_signal_evaluation(payload)
+        if payload["claim"] and payload["conflicts_with"]:
             normalized.append(payload)
     return normalized
 
@@ -3277,6 +3621,9 @@ def parse_memory_update(summary_text: str) -> dict[str, Any]:
         parsed["alert_candidates"] = coerce_alert_candidates(
             payload.get("alert_candidates")
         )
+        parsed["contradictions"] = coerce_contradictions(
+            payload.get("contradictions")
+        )
         if (
             parsed["primary_themes"]
             or parsed["secondary_themes"]
@@ -3287,6 +3634,7 @@ def parse_memory_update(summary_text: str) -> dict[str, Any]:
             or parsed["macro_updates"]
             or parsed["source_assessments"]
             or parsed["alert_candidates"]
+            or parsed["contradictions"]
         ):
             return parsed
 
@@ -3575,6 +3923,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         and not parsed["macro_updates"]
         and not parsed["source_assessments"]
         and not parsed["alert_candidates"]
+        and not parsed["contradictions"]
     ):
         print("未在 summary 中找到可解析的 MEMORY_UPDATE")
         return 1
@@ -3637,6 +3986,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
     event_updates = 0
     macro_updates = 0
     source_updates = 0
+    contradiction_updates = 0
     with memory_store.lock():
         memory_store.migrate_legacy_state(state)
 
@@ -3699,6 +4049,14 @@ def apply_memory(config_path: str, summary_file: str) -> int:
             ):
                 source_updates += 1
 
+        for update in parsed["contradictions"]:
+            if memory_store.update_contradiction_memory(
+                update=update,
+                seen_at=seen_at,
+                update_id=update_id,
+            ):
+                contradiction_updates += 1
+
         if (
             theme_updates
             or account_updates
@@ -3706,6 +4064,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
             or event_updates
             or macro_updates
             or source_updates
+            or contradiction_updates
             or not memory_store.index_path.exists()
         ):
             memory_store.rebuild_index()
@@ -3734,6 +4093,8 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "source_assessments": parsed["source_assessments"],
         "alert_candidates": parsed["alert_candidates"],
         "alert_candidate_count": len(parsed["alert_candidates"]),
+        "contradictions": parsed["contradictions"],
+        "contradiction_count": len(parsed["contradictions"]),
         "memory_dir": config["memory_dir"],
         "memory_backend": config["memory_backend"],
         "memory_index": str(memory_store.index_path),
@@ -3743,6 +4104,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "event_updates_applied": event_updates,
         "macro_updates_applied": macro_updates,
         "source_updates_applied": source_updates,
+        "contradiction_updates_applied": contradiction_updates,
         "already_applied": (
             theme_updates == 0
             and account_updates == 0
@@ -3750,6 +4112,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
             and event_updates == 0
             and macro_updates == 0
             and source_updates == 0
+            and contradiction_updates == 0
         ),
     }
     atomic_write_json(memory_update_path, payload)

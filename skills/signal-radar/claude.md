@@ -271,7 +271,8 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
   "event_updates": [],
   "macro_updates": [],
   "source_assessments": [],
-  "alert_candidates": []
+  "alert_candidates": [],
+  "contradictions": []
 }
 ```
 
@@ -286,6 +287,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `macro_updates`：宏观环境、流动性、能源和大宗商品趋势
 - `source_assessments`：agent 根据历史观察维护的来源评价
 - `alert_candidates`：候选内容告警，只记录候选，不代表一定发送
+- `contradictions`：疑似冲突观察，只记录冲突，不自动判定真假
 
 解析器仍保留向后兼容：
 
@@ -304,6 +306,14 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 
 `apply-memory` 会跳过 `signal_type: noise`、`novelty_level: none`、`memory_action: skip|reject` 或 `verification_status: rejected` 的结构化 claim。被接受的 claim 会在文件 backend 中保存 `cluster_id`、`signal_evaluation`、`last_valuable_at`、`status` 和可选 `decay_score`，这是后续 memory 衰减和污染控制的基础。
 
+diff engine 的第一层字段已经进入 claim memory。`entity_updates`、`event_updates` 和 `macro_updates` 都可以带：
+
+- `what_changed`：这条信息相对旧记忆或近期 run 到底变化在哪里
+- `changed_since`: `last_memory`、`recent_run`、`unknown`
+- `prior_claim_refs`：被比较或被更新的旧 claim id / 引用
+
+这些字段只解释变化，不负责验证真假。
+
 `entity_updates.thesis_update` 是当前新增的 thesis memory 入口，用来把标的记忆从“claim 堆叠”推进到“投资假设维护”。它先不单独开 `memory/theses/`，而是写入对应 `memory/entities/<entity-id>.json` 的 `theses` 字段，并用 `claims.<claim_id>.thesis_ids` 关联原始 claim。建议字段包括：
 
 - `thesis_id` / `title`
@@ -314,6 +324,15 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `invalidation_points`
 - `catalysts`
 - `what_changed` / `thesis_impact`
+
+contradiction detector 先做轻量记录，不做自动裁决。`contradictions` 会写入 `memory/contradictions/<contradiction-id>.json`，并进入 `memory/index.json`。推荐字段包括：
+
+- `claim`
+- `conflicts_with`
+- `conflict_type`: `source_conflict`、`data_conflict`、`official_unverified`
+- `severity`: `low`、`medium`、`high`
+- `related_entity_ids` / `related_event_ids` / `related_macro_ids` / `related_thesis_ids`
+- `evidence_item_ids` / `source_ids`
 
 ### 5. 记忆结构、归一化与幂等
 
@@ -326,6 +345,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `memory/events/<event-id>.json`：持续事件时间线
 - `memory/macro/<macro-id>.json`：宏观趋势记忆
 - `memory/sources/<source-id>.json`：来源评价记忆
+- `memory/contradictions/<contradiction-id>.json`：疑似冲突观察
 - `memory/index.json`：汇总索引
 
 当前记忆写入前会做两层归一化：
@@ -364,6 +384,8 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `source_assessments`
 - `alert_candidates`
 - `alert_candidate_count`
+- `contradictions`
+- `contradiction_count`
 - `memory_backend`
 - `theme_updates`
 - `account_updates`
@@ -371,14 +393,15 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `event_updates_applied`
 - `macro_updates_applied`
 - `source_updates_applied`
+- `contradiction_updates_applied`
 - `already_applied`
 
 ### 6. 索引、锁与原子写
 
 当前实现已经不是“直接覆写 JSON 文件”的脆弱模式，而是补上了几层工程保护：
 
-- **索引文件：** `memory/index.json` 汇总所有账号、主题、标的、事件、宏观和来源文件，供快速遍历和跨机同步后恢复
-- **索引版本：** 当前仓库初始化的 `memory/index.json` 是 `version: 3`
+- **索引文件：** `memory/index.json` 汇总所有账号、主题、标的、事件、宏观、来源和疑似冲突文件，供快速遍历和跨机同步后恢复
+- **索引版本：** 当前 file backend 重建出的 `memory/index.json` 是 `version: 5`
 - **本地写锁：** `memory/.write.lock` 防止同一台机器上的并发任务同时写记忆
 - **原子写：** 关键 JSON/TXT 落盘通过“临时文件 + `os.replace`”完成，减少异常退出时的半截文件风险
 

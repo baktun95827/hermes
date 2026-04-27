@@ -43,6 +43,7 @@ New keys:
 - `macro_updates`: macro environment, liquidity, rates, energy, commodities
 - `source_assessments`: agent-maintained source notes
 - `alert_candidates`: possible content alerts for the digest layer to decide on
+- `contradictions`: suspected conflicts between claims, sources, data, or missing official verification
 
 `signal_evaluation` is the shared value-judgment shape. It may appear inside `signal_evaluations`, claim updates, and alert candidates:
 
@@ -66,6 +67,20 @@ Accepted values:
 - `evidence_strength`: `weak`, `single_source`, `multi_source`, `official`
 - `memory_action`: `write`, `merge`, `skip`, `supersede`, `reject`
 - `alert_level`: `none`, `watch`, `important`, `urgent`
+
+Accepted claim updates in `entity_updates`, `event_updates`, and `macro_updates` should include diff fields when the analyzer can infer them:
+
+```json
+{
+  "what_changed": "相对旧记忆，本次增量是市场开始把液冷业务弹性和算力基础设施扩张联系起来。",
+  "changed_since": "last_memory",
+  "prior_claim_refs": ["entity_claim:previous-liquid-cooling-demand"]
+}
+```
+
+Accepted values:
+
+- `changed_since`: `last_memory`, `recent_run`, `unknown`
 
 `entity_updates.thesis_update` is the first thesis-memory layer. It is embedded in entity memory instead of using a separate `memory/theses/` directory for now:
 
@@ -126,6 +141,9 @@ Example:
       "claim_type": "thesis",
       "verification_status": "plausible",
       "materiality": "medium",
+      "what_changed": "相对旧记忆，本次增量是市场开始把液冷业务弹性和算力基础设施扩张联系起来。",
+      "changed_since": "last_memory",
+      "prior_claim_refs": ["entity_claim:previous-liquid-cooling-demand"],
       "signal_evaluation": {
         "signal_type": "new_angle",
         "novelty_level": "medium",
@@ -161,6 +179,9 @@ Example:
       "claim": "市场开始交易海峡航运受阻风险，可能影响原油和航运资产预期。",
       "verification_status": "unverified",
       "importance": "high",
+      "what_changed": "相对近期事件记忆，讨论焦点从地缘言论升级为航运受阻和油价影响。",
+      "changed_since": "recent_run",
+      "prior_claim_refs": [],
       "signal_evaluation": {
         "signal_type": "new_fact",
         "novelty_level": "high",
@@ -195,6 +216,17 @@ Example:
       "evidence_item_ids": ["x:123"],
       "source_ids": ["x:example_user"]
     }
+  ],
+  "contradictions": [
+    {
+      "claim": "某账号称英维克液冷订单正在加速释放。",
+      "conflicts_with": "另一来源称同类项目招标节奏放缓，且公司公告尚未验证订单加速。",
+      "conflict_type": "source_conflict",
+      "severity": "medium",
+      "related_entity_ids": ["cn_equity:英维克"],
+      "evidence_item_ids": ["x:123", "x:789"],
+      "source_ids": ["x:example_user", "x:other_source"]
+    }
   ]
 }
 ```
@@ -220,6 +252,7 @@ When using `memory_backend: file`, committed long-run memory lives under `memory
 - `memory/events/`: one file per evolving event timeline
 - `memory/macro/`: one file per macro trend
 - `memory/sources/`: agent-maintained notes about accounts and sources
+- `memory/contradictions/`: one file per suspected contradiction
 - `memory/index.json`: rebuilt index of all memory files
 
 ## Write Rules
@@ -235,7 +268,7 @@ When using `memory_backend: file`, committed long-run memory lives under `memory
 
 For accepted updates, `apply-memory` derives a stable `claim_id` when the analyzer does not provide one. This gives idempotent writes and prevents one summary retry from inflating memory.
 
-Accepted claim updates store `cluster_id`, `signal_evaluation`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend. These fields are the first layer of memory pollution control; they do not yet implement automatic decay.
+Accepted claim updates store `cluster_id`, `signal_evaluation`, `what_changed`, `changed_since`, `prior_claim_refs`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend. These fields are the first layer of diff tracking and memory pollution control; they do not yet implement automatic decay.
 
 When an accepted `entity_updates` item includes `thesis_update`, the file backend also updates `memory/entities/<entity-id>.json`:
 
@@ -244,6 +277,15 @@ When an accepted `entity_updates` item includes `thesis_update`, the file backen
 - `recent_thesis_ids`: keeps recent thesis context available to the next analyzer prompt
 
 This intentionally keeps thesis memory inside entity memory for the current stage. A separate thesis backend can be introduced later only if cross-entity thesis queries become a real bottleneck.
+
+`contradictions` are written to `memory/contradictions/<contradiction-id>.json` and indexed. They are deliberately observational:
+
+- `conflict_type`: `source_conflict`, `data_conflict`, `official_unverified`
+- `severity`: `low`, `medium`, `high`
+- required semantic fields: `claim`, `conflicts_with`
+- optional links: `related_entity_ids`, `related_event_ids`, `related_macro_ids`, `related_thesis_ids`
+
+Recording a contradiction does not automatically mark any related claim as false, rejected, or superseded. That decision should remain a later verification step.
 
 ## Human vs Agent Ownership
 
