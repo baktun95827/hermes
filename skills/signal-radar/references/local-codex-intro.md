@@ -7,7 +7,7 @@
 项目目标不是“抓到推文就结束”，而是把远程内容收集到本地，再做主题归类、记忆更新和摘要输出。当前运行主线是：
 
 ```text
-collect -> local store -> analyzer -> apply-memory
+collect -> build-analysis-input -> analyzer -> apply-memory
 ```
 
 ## 你先要知道的几件事
@@ -22,18 +22,18 @@ collect -> local store -> analyzer -> apply-memory
 - `memory/state.json` 里 `updated_at` 是当前更可靠的状态写入时间，`last_run` 主要保留给旧消费者兼容使用
 - 记忆模型已经从宽泛主题扩展为 claim-driven memory，可维护标的、事件、宏观、来源评价和疑似冲突
 - `MEMORY_UPDATE` 现在也承载价值判断和 diff：`event_clusters`、`signal_evaluation`、`cluster_id`、`what_changed`、`contradictions`、`alert_candidates`
-- 每轮会生成 `run_metrics_<run_id>.json`，先记录抓取健康指标，再由 `apply-memory` 回填事件簇和 memory 写入指标
+- 每轮会生成 `run_metrics_<run_id>.json`，先记录抓取健康指标，再由 `build-analysis-input` 回填输入构建指标，最后由 `apply-memory` 回填事件簇和 memory 写入指标
 
 ## 当前最重要的文件
 
 - `SKILL.md`
   部署态运行入口、标准流程、对 Hermes 的调用约定
 - `monitor.py`
-  当前 collector 和 memory bridge 的核心实现
+  当前 collector、analysis input builder 和 memory bridge 的核心实现
 - `config.yaml`
   账号列表、cookies 路径、state、memory、输出目录
 - `references/architecture.md`
-  四层边界，判断一段逻辑该放哪时先看这个
+  分层边界，判断一段逻辑该放哪时先看这个
 - `references/collector-schema.md`
   多来源 collector 的统一输出 schema
 - `references/memory-schema.md`
@@ -45,10 +45,12 @@ collect -> local store -> analyzer -> apply-memory
 
 - `collector`
   负责浏览器抓取和标准化输出，不负责主观判断
+- `analysis input`
+  负责读取 `collector_batch` 和 memory context，生成 `analysis_input` 与 prompt
 - `local store`
   负责落地 `reports/`、`latest_run.json`、`memory/`、`run_metrics`
 - `analyzer`
-  负责读 prompt 和 memory，生成摘要与 `MEMORY_UPDATE`
+  负责读 prompt，生成摘要与 `MEMORY_UPDATE`
 - `apply-memory`
   是 analyzer 提交 `MEMORY_UPDATE` 到当前 memory backend 的唯一入口
 
@@ -63,6 +65,7 @@ pip3 install --break-system-packages playwright pyyaml
 python3 -m playwright install chromium --with-deps
 python3 -m py_compile skills/signal-radar/monitor.py
 python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/config.yaml
+python3 skills/signal-radar/monitor.py build-analysis-input --config skills/signal-radar/config.yaml
 ```
 
 前提：
@@ -83,6 +86,8 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 - 来源评价记忆在 `memory/sources/`
 - 疑似冲突观察在 `memory/contradictions/`
 - 标准化 batch 产物是 `collector_batch_<run_id>.json`
+- 分析输入产物是 `analysis_input_<run_id>.json`
+- LLM prompt 由 `build-analysis-input` 生成到 `prompt_<run_id>.txt`
 - 运行指标产物是 `run_metrics_<run_id>.json`
 - 统一 schema 是 `collector-batch/v1` 和 `collector-item/v1`
 - 结构化记忆更新可以包含 `event_clusters`、`signal_evaluations`、各 claim 的 `signal_evaluation`、diff 字段、标的内嵌 `thesis_update`、结构化 `source_profile`、疑似 `contradictions`、以及只供下游判断的 `alert_candidates`
@@ -100,8 +105,9 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 - 不要把 `contradictions` 当成事实裁决；它只是冲突观察，后续还需要验证
 - 不要把普通新闻都写成 thesis；只有信息改变 bull/bear case、关键验证点、证伪条件或催化时间表时才写 `thesis_update`
 - 不要把 analyzer 重新耦合回浏览器流程
+- 不要让 `collect` 重新读取长期 memory 或生成 prompt；这属于 `build-analysis-input`
 - 如果只是要接新 source，优先补 `collectors/<source>/source.yaml` 和标准化输出，不要先改摘要层
 
 ## 一句话总结
 
-Signal Radar 现在本质上是一个“X 先行、面向多来源演进”的 collector + memory skill。你本地开发时，重点是保证 `monitor.py`、Playwright 和标准化产物稳定，再逐步把 analyzer 从 X 专用输入迁到统一 schema。
+Signal Radar 现在本质上是一个“X 先行、面向多来源演进”的 collector + analysis input + memory skill。你本地开发时，重点是保证 `monitor.py`、Playwright、标准化产物和 `analysis_input` 契约稳定，再逐步把 analyzer 从 X 专用输入迁到统一 schema。

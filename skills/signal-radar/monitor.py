@@ -3,7 +3,8 @@
 Signal Radar for Hermes.
 
 Commands:
-  - collect: scrape configured X accounts and write prompt/report artifacts
+  - collect: scrape configured X accounts and write collector artifacts
+  - build-analysis-input: build the prompt and replayable analysis input artifact
   - latest: print the latest artifact manifest or selected fields from it
   - apply-memory: parse a Hermes summary and submit MEMORY_UPDATE to memory backend
 """
@@ -499,7 +500,7 @@ def stable_contradiction_id(update: dict[str, Any]) -> str:
 def stable_event_cluster_id(update: dict[str, Any]) -> str:
     raw_cluster_id = clean_text(update.get("cluster_id") or update.get("id"))
     if raw_cluster_id:
-        return safe_filename(raw_cluster_id)
+        return raw_cluster_id
 
     identity = {
         "title": clean_text(update.get("title")),
@@ -835,6 +836,7 @@ def build_artifact_paths(output_dir: Path, run_id: str) -> dict[str, Path]:
     return {
         "data": output_dir / f"data_{run_id}.json",
         "collector_batch": output_dir / f"collector_batch_{run_id}.json",
+        "analysis_input": output_dir / f"analysis_input_{run_id}.json",
         "prompt": output_dir / f"prompt_{run_id}.txt",
         "report": output_dir / f"report_{run_id}.txt",
         "summary": output_dir / f"summary_{run_id}.txt",
@@ -3129,8 +3131,6 @@ def build_collect_run_metrics(
     accounts: list[str],
     fetch_results: list[FetchResult],
     all_tweets: list[dict[str, Any]],
-    recommendations: list[dict[str, Any]],
-    keywords: list[str],
     warning: str | None,
 ) -> dict[str, Any]:
     status_counts = Counter(result.status for result in fetch_results)
@@ -3154,9 +3154,13 @@ def build_collect_run_metrics(
             "tweets_raw": visible_tweets,
             "tweets_new": new_tweets,
             "tweets_after_dedup": len(all_tweets),
-            "recommendation_count": len(recommendations),
-            "keyword_count": len(keywords),
             "warning": bool(warning),
+        },
+        "analysis_input": {
+            "built": False,
+            "item_count": 0,
+            "recommendation_count": 0,
+            "keyword_count": 0,
         },
         "analysis": {
             "event_clusters": 0,
@@ -3204,6 +3208,97 @@ def count_high_novelty_signals(signal_evaluations: list[dict[str, Any]]) -> int:
         for item in signal_evaluations
         if build_signal_evaluation(item).get("novelty_level") == "high"
     )
+
+
+def build_memory_context(memory_store: MemoryBackend) -> dict[str, Any]:
+    return {
+        "recent_theme_memories": memory_store.get_recent_theme_memories(),
+        "recent_entity_memories": memory_store.get_recent_entity_memories(),
+        "recent_event_memories": memory_store.get_recent_event_memories(),
+        "recent_macro_memories": memory_store.get_recent_macro_memories(),
+        "recent_source_memories": memory_store.get_recent_source_memories(),
+        "account_notes": memory_store.get_account_notes(),
+    }
+
+
+def format_history_context(memory_context: dict[str, Any]) -> str:
+    recent_theme_memories = memory_context.get("recent_theme_memories") or []
+    recent_entity_memories = memory_context.get("recent_entity_memories") or []
+    recent_event_memories = memory_context.get("recent_event_memories") or []
+    recent_macro_memories = memory_context.get("recent_macro_memories") or []
+    recent_source_memories = memory_context.get("recent_source_memories") or []
+    account_notes = memory_context.get("account_notes") or {}
+
+    history_context = ""
+    if recent_theme_memories:
+        history_context += "\n近期主题记忆:\n"
+        for item in recent_theme_memories:
+            secondaries = item.get("top_secondary_themes") or item.get(
+                "latest_secondary_themes", []
+            )
+            secondary_text = ", ".join(secondaries) if secondaries else "（暂无二级主题）"
+            history_context += (
+                f"  - {item['primary_theme']}: 二级主题 {secondary_text}；"
+                f"出现 {item['run_count']} 次\n"
+            )
+    if account_notes:
+        history_context += "\n各账号历史画像:\n"
+        for user, note in account_notes.items():
+            history_context += f"  @{user}: {note}\n"
+    if recent_entity_memories:
+        history_context += "\n近期标的/公司记忆:\n"
+        for item in recent_entity_memories:
+            claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
+            changes = "；".join(item.get("recent_changes") or [])
+            theses = "；".join(item.get("recent_theses") or [])
+            history_context += (
+                f"  - {item['display_name'] or item['entity_id']}"
+                f" [{item.get('entity_type') or 'unknown'}]: {claims}\n"
+            )
+            if changes:
+                history_context += f"    recent changes: {changes}\n"
+            if theses:
+                history_context += f"    thesis: {theses}\n"
+    if recent_event_memories:
+        history_context += "\n近期事件记忆:\n"
+        for item in recent_event_memories:
+            claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
+            history_context += f"  - {item['title'] or item['event_id']}: {claims}\n"
+            changes = "；".join(item.get("recent_changes") or [])
+            if changes:
+                history_context += f"    recent changes: {changes}\n"
+    if recent_macro_memories:
+        history_context += "\n近期宏观记忆:\n"
+        for item in recent_macro_memories:
+            claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
+            history_context += f"  - {item['topic'] or item['macro_id']}: {claims}\n"
+            changes = "；".join(item.get("recent_changes") or [])
+            if changes:
+                history_context += f"    recent changes: {changes}\n"
+    if recent_source_memories:
+        history_context += "\n近期来源画像:\n"
+        for item in recent_source_memories:
+            topic_parts = []
+            for topic in item.get("top_topics") or []:
+                if not isinstance(topic, dict):
+                    continue
+                topic_name = clean_text(topic.get("topic"))
+                score = topic.get("score")
+                if topic_name and score is not None:
+                    topic_parts.append(f"{topic_name}:{score}")
+            topic_text = ", ".join(topic_parts) if topic_parts else "（暂无主题评分）"
+            trust_score = item.get("trust_score")
+            trust_text = f"{trust_score}" if trust_score is not None else "unknown"
+            history_context += (
+                f"  - {item['display_name'] or item['source_id']}"
+                f" [{item.get('source_type') or 'unknown'}]: "
+                f"trust={trust_text}, repeat={item.get('repeat_tendency') or 'unknown'}, "
+                f"confirm={item.get('confirmation_required') or 'unknown'}, "
+                f"valuable_count={item.get('valuable_count') or 0}, topics={topic_text}\n"
+            )
+            if item.get("latest_assessment"):
+                history_context += f"    assessment: {item['latest_assessment']}\n"
+    return history_context
 
 
 class DiscoveryEngine:
@@ -3318,82 +3413,7 @@ def build_llm_prompt(
     memory_store: MemoryBackend,
     predefined_themes: list[str],
 ) -> str:
-    recent_theme_memories = memory_store.get_recent_theme_memories()
-    recent_entity_memories = memory_store.get_recent_entity_memories()
-    recent_event_memories = memory_store.get_recent_event_memories()
-    recent_macro_memories = memory_store.get_recent_macro_memories()
-    recent_source_memories = memory_store.get_recent_source_memories()
-    account_notes = memory_store.get_account_notes()
-
-    history_context = ""
-    if recent_theme_memories:
-        history_context += "\n近期主题记忆:\n"
-        for item in recent_theme_memories:
-            secondaries = item.get("top_secondary_themes") or item.get(
-                "latest_secondary_themes", []
-            )
-            secondary_text = ", ".join(secondaries) if secondaries else "（暂无二级主题）"
-            history_context += (
-                f"  - {item['primary_theme']}: 二级主题 {secondary_text}；"
-                f"出现 {item['run_count']} 次\n"
-            )
-    if account_notes:
-        history_context += "\n各账号历史画像:\n"
-        for user, note in account_notes.items():
-            history_context += f"  @{user}: {note}\n"
-    if recent_entity_memories:
-        history_context += "\n近期标的/公司记忆:\n"
-        for item in recent_entity_memories:
-            claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
-            changes = "；".join(item.get("recent_changes") or [])
-            theses = "；".join(item.get("recent_theses") or [])
-            history_context += (
-                f"  - {item['display_name'] or item['entity_id']}"
-                f" [{item.get('entity_type') or 'unknown'}]: {claims}\n"
-            )
-            if changes:
-                history_context += f"    recent changes: {changes}\n"
-            if theses:
-                history_context += f"    thesis: {theses}\n"
-    if recent_event_memories:
-        history_context += "\n近期事件记忆:\n"
-        for item in recent_event_memories:
-            claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
-            history_context += f"  - {item['title'] or item['event_id']}: {claims}\n"
-            changes = "；".join(item.get("recent_changes") or [])
-            if changes:
-                history_context += f"    recent changes: {changes}\n"
-    if recent_macro_memories:
-        history_context += "\n近期宏观记忆:\n"
-        for item in recent_macro_memories:
-            claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
-            history_context += f"  - {item['topic'] or item['macro_id']}: {claims}\n"
-            changes = "；".join(item.get("recent_changes") or [])
-            if changes:
-                history_context += f"    recent changes: {changes}\n"
-    if recent_source_memories:
-        history_context += "\n近期来源画像:\n"
-        for item in recent_source_memories:
-            topic_parts = []
-            for topic in item.get("top_topics") or []:
-                if not isinstance(topic, dict):
-                    continue
-                topic_name = clean_text(topic.get("topic"))
-                score = topic.get("score")
-                if topic_name and score is not None:
-                    topic_parts.append(f"{topic_name}:{score}")
-            topic_text = ", ".join(topic_parts) if topic_parts else "（暂无主题评分）"
-            trust_score = item.get("trust_score")
-            trust_text = f"{trust_score}" if trust_score is not None else "unknown"
-            history_context += (
-                f"  - {item['display_name'] or item['source_id']}"
-                f" [{item.get('source_type') or 'unknown'}]: "
-                f"trust={trust_text}, repeat={item.get('repeat_tendency') or 'unknown'}, "
-                f"confirm={item.get('confirmation_required') or 'unknown'}, "
-                f"valuable_count={item.get('valuable_count') or 0}, topics={topic_text}\n"
-            )
-            if item.get("latest_assessment"):
-                history_context += f"    assessment: {item['latest_assessment']}\n"
+    history_context = format_history_context(build_memory_context(memory_store))
 
     theme_hint = ""
     if predefined_themes:
@@ -4041,6 +4061,283 @@ def build_memory_update_id(
     return f"mu_{digest[:20]}"
 
 
+def collector_item_to_report_tweet(item: dict[str, Any]) -> dict[str, Any]:
+    author_payload = item.get("author") if isinstance(item.get("author"), dict) else {}
+    source_meta = (
+        item.get("source_meta") if isinstance(item.get("source_meta"), dict) else {}
+    )
+    metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+    relations = item.get("relations") if isinstance(item.get("relations"), dict) else {}
+    media = item.get("media") if isinstance(item.get("media"), list) else []
+
+    author = normalize_account_name(
+        author_payload.get("entity_id")
+        or author_payload.get("handle")
+        or author_payload.get("display_name")
+        or ""
+    )
+    source_account = normalize_account_name(source_meta.get("source_account") or author)
+    image_urls = [
+        clean_text(media_item.get("url"))
+        for media_item in media
+        if isinstance(media_item, dict)
+        and media_item.get("type") == "image"
+        and clean_text(media_item.get("url"))
+    ]
+    mentioned_users = coerce_string_list(source_meta.get("mentioned_users"))
+    for entity_id in coerce_string_list(relations.get("mentioned_entities")):
+        mentioned_users.append(entity_id.split(":", 1)[-1])
+
+    return {
+        "id": clean_text(item.get("item_id")),
+        "text": clean_text(item.get("text")),
+        "author": author,
+        "source_account": source_account,
+        "created_at": clean_text(item.get("published_at")),
+        "is_retweet": bool(relations.get("is_repost")),
+        "mentions": unique_preserving_order(
+            [
+                normalize_account_name(user)
+                for user in mentioned_users
+                if normalize_account_name(user)
+            ]
+        ),
+        "images": image_urls,
+        "has_video": any(
+            isinstance(media_item, dict) and media_item.get("type") == "video"
+            for media_item in media
+        )
+        or bool(source_meta.get("has_video")),
+        "quoted_text": clean_text(source_meta.get("quoted_text")),
+        "retweet_count": int(metrics.get("reposts") or 0),
+        "like_count": int(metrics.get("likes") or 0),
+        "reply_count": int(metrics.get("replies") or 0),
+        "tweet_url": clean_text(item.get("url")),
+    }
+
+
+def collector_batch_to_account_tweets(
+    collector_batch: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    items = collector_batch.get("items")
+    if not isinstance(items, list):
+        return {}
+
+    account_tweets: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        tweet = collector_item_to_report_tweet(item)
+        if not tweet.get("text"):
+            continue
+        source_account = tweet.get("source_account") or tweet.get("author") or "unknown"
+        account_tweets.setdefault(source_account, []).append(tweet)
+    return account_tweets
+
+
+def resolve_latest_or_collector_batch_path(
+    config: dict[str, Any],
+    latest_payload: dict[str, Any],
+    collector_batch_file: str | None,
+) -> Path | None:
+    if collector_batch_file:
+        return resolve_path(Path(config["base_dir"]), collector_batch_file)
+    latest_path = clean_text(latest_payload.get("paths", {}).get("collector_batch"))
+    if latest_path:
+        return Path(latest_path).expanduser().resolve()
+    return None
+
+
+def build_analysis_input(config_path: str, collector_batch_file: str | None) -> int:
+    config = load_config(config_path)
+    latest_run_file = Path(config["latest_run_file"])
+    latest_payload = read_latest_manifest(latest_run_file) or {}
+    collector_batch_path = resolve_latest_or_collector_batch_path(
+        config=config,
+        latest_payload=latest_payload,
+        collector_batch_file=collector_batch_file,
+    )
+    if collector_batch_path is None or not collector_batch_path.exists():
+        print(f"collector_batch 文件不存在: {collector_batch_path or ''}")
+        return 1
+
+    collector_batch = read_json_file(collector_batch_path, {})
+    if not collector_batch:
+        print(f"collector_batch 格式错误: {collector_batch_path}")
+        return 1
+
+    latest_paths = (
+        latest_payload.get("paths") if isinstance(latest_payload.get("paths"), dict) else {}
+    )
+    latest_collector_batch = clean_text(latest_paths.get("collector_batch"))
+    uses_latest_collector_batch = False
+    if latest_collector_batch:
+        try:
+            uses_latest_collector_batch = (
+                Path(latest_collector_batch).expanduser().resolve()
+                == collector_batch_path.resolve()
+            )
+        except OSError:
+            uses_latest_collector_batch = False
+
+    run_id = clean_text(
+        collector_batch.get("collector_run_id") or latest_payload.get("run_id")
+    ) or timestamp_slug()
+    generated_at = utc_now().isoformat()
+    output_dir = Path(config["output_dir"])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    artifact_paths = build_artifact_paths(output_dir, run_id)
+
+    account_tweets = collector_batch_to_account_tweets(collector_batch)
+    all_tweets = [
+        tweet
+        for tweets in account_tweets.values()
+        for tweet in tweets
+    ]
+    discovery = DiscoveryEngine(
+        config["accounts"],
+        config["discovery"]["min_interactions"],
+    )
+    if config["discovery"]["enabled"]:
+        discovery.process(all_tweets)
+    recommendations = discovery.get_recommendations()
+    keywords = extract_keywords(all_tweets)
+    raw_report = format_raw_report(account_tweets)
+    discovery_section = format_discovery_section(recommendations, keywords)
+
+    normalizer = ThemeNormalizer(
+        canonical_primary_themes=config.get("themes", []),
+        alias_config=config.get("theme_aliases", {}),
+        secondary_alias_config=config.get("secondary_theme_aliases", {}),
+    )
+    memory_store = create_memory_backend(config, normalizer=normalizer)
+    state = StateManager(
+        config["state_file"],
+        legacy_paths=build_legacy_state_paths(
+            config["base_dir"],
+            config["state_file"],
+        ),
+    )
+    with memory_store.lock():
+        memory_store.migrate_legacy_state(state)
+        if not memory_store.index_path.exists():
+            memory_store.rebuild_index()
+        memory_context = build_memory_context(memory_store)
+        prompt = build_llm_prompt(
+            raw_report=raw_report,
+            discovery_section=discovery_section,
+            memory_store=memory_store,
+            predefined_themes=config.get("themes", []),
+        )
+
+    now_str = utc_now().strftime("%Y-%m-%d %H:%M UTC")
+    full_report = f"📊 X 监控报告 — {now_str}\n\n{raw_report}\n{discovery_section}"
+    analysis_input_payload = {
+        "schema_version": "signal-radar-analysis-input/v1",
+        "run_id": run_id,
+        "generated_at": generated_at,
+        "config_path": config["config_path"],
+        "collector_batch_path": str(collector_batch_path),
+        "prompt_path": str(artifact_paths["prompt"]),
+        "report_path": str(artifact_paths["report"]),
+        "memory_backend": config["memory_backend"],
+        "memory_index": str(memory_store.index_path),
+        "predefined_themes": config.get("themes", []),
+        "collector": {
+            "schema_version": collector_batch.get("schema_version"),
+            "source": collector_batch.get("source"),
+            "collector_run_id": collector_batch.get("collector_run_id"),
+            "item_count": len(all_tweets),
+        },
+        "discovery": {
+            "recommendations": recommendations,
+            "keywords": keywords,
+        },
+        "memory_context": memory_context,
+        "normalized_items": collector_batch.get("items", []),
+    }
+    atomic_write_json(artifact_paths["analysis_input"], analysis_input_payload)
+    atomic_write_text(artifact_paths["prompt"], prompt, encoding="utf-8")
+    atomic_write_text(artifact_paths["report"], full_report, encoding="utf-8")
+
+    run_metrics_path = (
+        Path(latest_paths.get("run_metrics"))
+        if uses_latest_collector_batch and latest_paths.get("run_metrics")
+        else artifact_paths["run_metrics"]
+    )
+    run_metrics_payload = read_json_file(
+        run_metrics_path,
+        {
+            "schema_version": "signal-radar-run-metrics/v1",
+            "run_id": run_id,
+            "status": "unknown",
+            "collector": {},
+            "analysis": {},
+            "memory": {},
+        },
+    )
+    run_metrics_payload["schema_version"] = "signal-radar-run-metrics/v1"
+    run_metrics_payload["run_id"] = run_metrics_payload.get("run_id") or run_id
+    run_metrics_payload["updated_at"] = generated_at
+    run_metrics_payload["analysis_input"] = {
+        "built": True,
+        "built_at": generated_at,
+        "item_count": len(all_tweets),
+        "recommendation_count": len(recommendations),
+        "keyword_count": len(keywords),
+        "collector_batch_path": str(collector_batch_path),
+        "analysis_input_path": str(artifact_paths["analysis_input"]),
+        "prompt_path": str(artifact_paths["prompt"]),
+    }
+    atomic_write_json(run_metrics_path, run_metrics_payload)
+
+    latest_payload.setdefault("paths", {})
+    latest_payload["run_id"] = run_id
+    latest_payload["generated_at"] = (
+        latest_payload.get("generated_at")
+        if uses_latest_collector_batch and latest_payload.get("generated_at")
+        else generated_at
+    )
+    latest_payload["config_path"] = config["config_path"]
+    latest_payload["paths"]["collector_batch"] = str(collector_batch_path)
+    latest_payload["paths"]["analysis_input"] = str(artifact_paths["analysis_input"])
+    latest_payload["paths"]["prompt"] = str(artifact_paths["prompt"])
+    latest_payload["paths"]["report"] = str(artifact_paths["report"])
+    latest_payload["paths"]["run_metrics"] = str(run_metrics_path)
+    latest_payload["paths"]["memory_index"] = str(memory_store.index_path)
+    latest_payload["paths"]["state"] = config["state_file"]
+    latest_payload["paths"]["memory_dir"] = config["memory_dir"]
+    if not uses_latest_collector_batch or not latest_payload["paths"].get("summary"):
+        latest_payload["paths"]["summary"] = str(artifact_paths["summary"])
+    if not uses_latest_collector_batch or not latest_payload["paths"].get("memory_update"):
+        latest_payload["paths"]["memory_update"] = str(artifact_paths["memory_update"])
+    if not uses_latest_collector_batch or not latest_payload["paths"].get("data"):
+        latest_payload["paths"]["data"] = str(artifact_paths["data"])
+    latest_payload["paths"].setdefault("warning", None)
+    latest_payload["memory_backend"] = config["memory_backend"]
+    latest_payload["analysis_input_built"] = True
+    latest_payload["analysis_input"] = {
+        "path": str(artifact_paths["analysis_input"]),
+        "built_at": generated_at,
+        "item_count": len(all_tweets),
+        "recommendation_count": len(recommendations),
+        "keyword_count": len(keywords),
+    }
+    latest_payload["run_metrics"] = run_metrics_payload
+    if not isinstance(latest_payload.get("summary"), dict):
+        latest_payload["summary"] = {}
+    latest_payload["summary"]["analysis_input_item_count"] = len(all_tweets)
+    latest_payload["summary"]["recommendation_count"] = len(recommendations)
+    latest_payload["summary"]["keyword_count"] = len(keywords)
+    write_latest_manifest(latest_run_file, latest_payload)
+
+    print(f"🧩 Analysis Input: {artifact_paths['analysis_input']}")
+    print(f"📝 Prompt: {artifact_paths['prompt']}")
+    print(f"📄 报告: {artifact_paths['report']}")
+    print(f"📈 Run Metrics: {run_metrics_path}")
+    return 0
+
+
 async def collect(config_path: str) -> int:
     collect_started_at_dt = utc_now()
     collect_started_at = collect_started_at_dt.isoformat()
@@ -4067,16 +4364,6 @@ async def collect(config_path: str) -> int:
             config["state_file"],
         ),
     )
-    normalizer = ThemeNormalizer(
-        canonical_primary_themes=config.get("themes", []),
-        alias_config=config.get("theme_aliases", {}),
-        secondary_alias_config=config.get("secondary_theme_aliases", {}),
-    )
-    memory_store = create_memory_backend(config, normalizer=normalizer)
-    with memory_store.lock():
-        memory_store.migrate_legacy_state(state)
-        if not memory_store.index_path.exists():
-            memory_store.rebuild_index()
     output_dir = Path(config["output_dir"])
     latest_run_file = Path(config["latest_run_file"])
     base_dir = Path(config["base_dir"])
@@ -4121,24 +4408,6 @@ async def collect(config_path: str) -> int:
     if warning:
         print(f"\n{warning}")
 
-    discovery = DiscoveryEngine(
-        accounts,
-        config["discovery"]["min_interactions"],
-    )
-    if config["discovery"]["enabled"]:
-        discovery.process(all_tweets)
-    recommendations = discovery.get_recommendations()
-    keywords = extract_keywords(all_tweets)
-
-    raw_report = format_raw_report(account_tweets)
-    discovery_section = format_discovery_section(recommendations, keywords)
-    prompt = build_llm_prompt(
-        raw_report=raw_report,
-        discovery_section=discovery_section,
-        memory_store=memory_store,
-        predefined_themes=config.get("themes", []),
-    )
-
     now = utc_now()
     run_id = timestamp_slug(now)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
@@ -4162,18 +4431,14 @@ async def collect(config_path: str) -> int:
         "collector_batch_schema": COLLECTOR_BATCH_SCHEMA_VERSION,
         "collector_item_schema": COLLECTOR_ITEM_SCHEMA_VERSION,
         "collector_batch_path": str(artifact_paths["collector_batch"]),
+        "analysis_input_path": str(artifact_paths["analysis_input"]),
         "run_metrics_path": str(artifact_paths["run_metrics"]),
         "account_results": [asdict(result) for result in fetch_results],
         "account_tweets": account_tweets,
-        "recommendations": recommendations,
-        "keywords": keywords,
         "warning": warning,
     }
     atomic_write_json(artifact_paths["collector_batch"], collector_batch)
     atomic_write_json(artifact_paths["data"], data_payload)
-    atomic_write_text(artifact_paths["prompt"], prompt, encoding="utf-8")
-    full_report = f"📊 X 监控报告 — {now_str}\n\n{raw_report}\n{discovery_section}"
-    atomic_write_text(artifact_paths["report"], full_report, encoding="utf-8")
     run_metrics = build_collect_run_metrics(
         run_id=run_id,
         started_at=collect_started_at,
@@ -4182,8 +4447,6 @@ async def collect(config_path: str) -> int:
         accounts=accounts,
         fetch_results=fetch_results,
         all_tweets=all_tweets,
-        recommendations=recommendations,
-        keywords=keywords,
         warning=warning,
     )
     atomic_write_json(artifact_paths["run_metrics"], run_metrics)
@@ -4202,12 +4465,13 @@ async def collect(config_path: str) -> int:
         "paths": {
             "data": str(artifact_paths["data"]),
             "collector_batch": str(artifact_paths["collector_batch"]),
+            "analysis_input": str(artifact_paths["analysis_input"]),
             "prompt": str(artifact_paths["prompt"]),
             "report": str(artifact_paths["report"]),
             "summary": str(artifact_paths["summary"]),
             "memory_update": str(artifact_paths["memory_update"]),
             "run_metrics": str(artifact_paths["run_metrics"]),
-            "memory_index": str(memory_store.index_path),
+            "memory_index": str(Path(config["memory_dir"]) / "index.json"),
             "state": config["state_file"],
             "warning": warning_path,
             "memory_dir": config["memory_dir"],
@@ -4215,12 +4479,11 @@ async def collect(config_path: str) -> int:
         "memory_backend": config["memory_backend"],
         "summary": {
             "new_tweet_count": len(all_tweets),
-            "recommendation_count": len(recommendations),
-            "keyword_count": len(keywords),
             "runtime_seconds": round(runtime_seconds, 3),
         },
         "account_results": [asdict(result) for result in fetch_results],
         "run_metrics": run_metrics,
+        "analysis_input_built": False,
         "memory_update_applied": False,
     }
     write_latest_manifest(latest_run_file, latest_payload)
@@ -4235,16 +4498,11 @@ async def collect(config_path: str) -> int:
             for result in fetch_results
         )
     )
-    if recommendations:
-        print(f"   发现: {', '.join('@' + item['username'] for item in recommendations[:3])}")
-    if keywords:
-        print(f"   关键词: {', '.join(keywords[:5])}")
     print(f"{'=' * 60}")
     print(f"\n📁 数据: {artifact_paths['data']}")
     print(f"📦 Collector Batch: {artifact_paths['collector_batch']}")
     print(f"📈 Run Metrics: {artifact_paths['run_metrics']}")
-    print(f"📝 Prompt: {artifact_paths['prompt']}")
-    print(f"📄 报告: {artifact_paths['report']}")
+    print("🧩 下一步: build-analysis-input 生成 prompt 和 analysis_input")
     print(f"🧭 最新索引: {latest_run_file}")
     if warning_path:
         print(f"⚠️ 告警: {warning_path}")
@@ -4291,6 +4549,7 @@ def latest(config_path: str, field: str | None) -> int:
     if field in {
         "data",
         "collector_batch",
+        "analysis_input",
         "prompt",
         "report",
         "summary",
@@ -4613,7 +4872,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command")
 
-    subparsers.add_parser("collect", help="抓取推文并生成 artifacts")
+    subparsers.add_parser("collect", help="抓取推文并生成采集 artifacts")
+
+    analysis_input_parser = subparsers.add_parser(
+        "build-analysis-input",
+        help="基于 collector_batch 和 memory 生成 analysis_input/prompt",
+    )
+    analysis_input_parser.add_argument(
+        "--collector-batch",
+        help="collector_batch JSON 路径；默认使用 latest_run.json",
+    )
 
     latest_parser = subparsers.add_parser("latest", help="读取 latest_run.json")
     latest_parser.add_argument(
@@ -4622,6 +4890,7 @@ def build_parser() -> argparse.ArgumentParser:
             "manifest",
             "data",
             "collector_batch",
+            "analysis_input",
             "prompt",
             "report",
             "summary",
@@ -4680,6 +4949,8 @@ def parse_cli_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
 async def async_main(args: argparse.Namespace) -> int:
     if args.command in (None, "collect"):
         return await collect(args.config)
+    if args.command == "build-analysis-input":
+        return build_analysis_input(args.config, args.collector_batch)
     if args.command == "latest":
         return latest(args.config, args.field)
     if args.command == "apply-memory":

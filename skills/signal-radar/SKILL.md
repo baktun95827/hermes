@@ -1,6 +1,6 @@
 ---
 name: signal-radar
-description: Collect remote social signals starting with configured X accounts via Playwright, generate Telegram-ready Chinese briefs grouped by topic, and submit MEMORY_UPDATE to the configured memory backend for long-running Hermes workflows.
+description: Collect remote social signals starting with configured X accounts via Playwright, build replayable analysis inputs, generate Telegram-ready Chinese briefs grouped by topic, and submit MEMORY_UPDATE to the configured memory backend for long-running Hermes workflows.
 metadata:
   hermes:
     tags: [x, twitter, monitoring, telegram, playwright, cron, memory]
@@ -24,13 +24,14 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 
 ## Files
 
-- `monitor.py`: collects tweets, exposes the latest artifact manifest, and applies `MEMORY_UPDATE`
+- `monitor.py`: collects tweets, builds analysis input artifacts, exposes the latest artifact manifest, and applies `MEMORY_UPDATE`
 - `config.yaml`: monitored accounts, memory backend, synced state path, topic hints, and alias normalization
 - `collectors/registry.yaml`: multi-source collector registry; contract-first for future sources like Reddit or 雪球
 - `collectors/x/source.yaml`: source definition template for the current X collector
 - `memory/state.json`: synced dedupe state (`seen_ids`, reliable `updated_at`, compatibility `last_run`)
 - `memory/index.json`: synced index of account/theme/entity/event/macro/source/contradiction memory files
-- `reports/run_metrics_<run-id>.json`: per-run health and analysis metrics, updated by `collect` and `apply-memory`
+- `reports/analysis_input_<run-id>.json`: replayable analyzer input built from collector output plus memory context
+- `reports/run_metrics_<run-id>.json`: per-run health and analysis metrics, updated by `collect`, `build-analysis-input`, and `apply-memory`
 - `references/local-codex-intro.md`: first-stop intro for a local Codex session; read this before patching if you need the project in one page
 - `references/architecture.md`: stable layer boundaries and contracts; read it before moving logic between collector, store, analyzer, and digest
 - `references/collector-schema.md`: unified collector batch/item contract for future multi-source ingestion
@@ -39,16 +40,19 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 
 ## Layered Design
 
-Treat `signal-radar` as four layers:
+Treat `signal-radar` as explicit file-boundary layers:
 
 1. `collector`: `monitor.py collect` opens X with Playwright and writes raw artifacts
-2. `local store`: `reports/`, `latest_run.json`, and the configured memory backend persist raw outputs and synced memory
-3. `analyzer`: the LLM reads the prompt and memory, writes the digest, and emits strict JSON `MEMORY_UPDATE`
-4. `digest / alerts`: Hermes or another downstream workflow decides whether to alert, send a digest, or no-op
+2. `analysis input builder`: `monitor.py build-analysis-input` combines collector output, discovery hints, and memory context into `analysis_input` plus prompt
+3. `local store`: `reports/`, `latest_run.json`, and the configured memory backend persist raw outputs and synced memory
+4. `analyzer`: the LLM reads the prompt, writes the digest, and emits strict JSON `MEMORY_UPDATE`
+5. `digest / alerts`: Hermes or another downstream workflow decides whether to alert, send a digest, or no-op
 
 Boundary rules:
 
 - the collector may use a browser, but it must not make final editorial judgments
+- the collector must not read long-run memory or build the LLM prompt
+- `build-analysis-input` is the only local bridge from normalized collector output to analyzer prompt
 - the analyzer must not open webpages or mutate memory backend state directly
 - the digest should read `latest` output and summary files, not scrape directories or guess paths
 - `apply-memory` is the only bridge that submits analyzer output to the configured memory backend
@@ -58,7 +62,8 @@ Multi-source note:
 - `registry.yaml` and `collectors/x/source.yaml` now define the source contract
 - current runtime is still X-first and enters through `monitor.py collect`
 - `collect` now also writes `collector_batch_<run_id>.json` in `collector-batch/v1` format
-- `collect` also writes `run_metrics_<run_id>.json`; `apply-memory` updates it with event cluster and memory write counts
+- `build-analysis-input` writes `analysis_input_<run_id>.json` and `prompt_<run_id>.txt`
+- `collect` writes `run_metrics_<run_id>.json`; `build-analysis-input` adds input-build metrics; `apply-memory` adds event cluster and memory write counts
 - these files are preparation for adding Reddit, 雪球, and other sources without rewriting the analyzer layer
 
 ## Setup
@@ -116,9 +121,16 @@ Behavior rules:
 
 - If `warning` returns a file path, read that warning and alert the user. This usually means login wall, selector drift, or a broken browser session.
 - If `new_tweet_count` is `0` and there is no warning, do not invent a summary. Tell the user there were no new posts and stop.
-- If there are new tweets, read the latest prompt path:
+- If there are new tweets, build the analyzer input first:
 
 ```bash
+python3 ~/.hermes/skills/signal-radar/monitor.py build-analysis-input --config ~/.hermes/skills/signal-radar/config.yaml
+```
+
+Then read the replayable analysis input or prompt path:
+
+```bash
+python3 ~/.hermes/skills/signal-radar/monitor.py latest --config ~/.hermes/skills/signal-radar/config.yaml --field analysis_input
 python3 ~/.hermes/skills/signal-radar/monitor.py latest --config ~/.hermes/skills/signal-radar/config.yaml --field prompt
 ```
 
@@ -300,6 +312,7 @@ Behavior notes:
 - `alert_candidates` are recorded in `memory_update_*.json`; sending them is a downstream digest/alert decision
 - `contradictions` are recorded under `memory/contradictions/` and indexed, but they do not automatically rewrite related entity, event, or macro memory conclusions
 - `latest --field memory_backend` returns the active memory backend; currently this should be `file`
+- `latest --field analysis_input` returns the replayable analyzer input artifact
 - `latest --field run_metrics` returns the per-run metrics artifact
 - `latest --field state` returns the synced state file path
 - when reading `memory/state.json`, prefer `updated_at` for the latest successful write time; `last_run` is kept for compatibility with older state consumers
@@ -311,7 +324,8 @@ For Hermes cron, keep the flow deterministic:
 1. Run `collect`
 2. Read `new_tweet_count` and `warning`
 3. If warning exists, send the warning
-4. If there are new tweets, read the prompt, generate the summary, send only the user-facing section, save the full summary, then run `apply-memory`
+4. If there are new tweets, run `build-analysis-input`
+5. Read the prompt, generate the summary, send only the user-facing section, save the full summary, then run `apply-memory`
 
 Prefer using the `latest` subcommand instead of guessing filenames or shell-globbing inside `reports/`.
 

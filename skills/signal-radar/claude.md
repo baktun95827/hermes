@@ -8,7 +8,7 @@ Signal Radar 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系�
 
 - `SKILL.md`：运行入口和标准操作流程
 - `references/local-codex-intro.md`：给本地 Codex 的一页式项目介绍
-- `references/architecture.md`：collector / local store / analyzer / digest 四层边界与契约
+- `references/architecture.md`：collector / analysis input / local store / analyzer / digest 边界与契约
 - `references/collector-schema.md`：多来源 collector 的统一输出 schema
 - `claude.md`：当前实现细节、文件结构、调试方式、限制和演进方向
 
@@ -22,17 +22,20 @@ Signal Radar 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系�
 
 ---
 
-## 四层架构
+## 分层架构
 
 ```text
-collector -> local store -> analyzer -> digest / alerts
+collector -> analysis input -> local store -> analyzer -> digest / alerts
 ```
 
 当前代码映射关系：
 
 - `collector`
   - `monitor.py collect`
-  - 负责 Playwright、cookies、滚动、DOM 提取、warning 判断、原始产物生成
+  - 负责 Playwright、cookies、滚动、DOM 提取、warning 判断、标准化 collector batch 和原始产物生成
+- `analysis input`
+  - `monitor.py build-analysis-input`
+  - 负责把 `collector_batch`、discovery hints、当前 memory context 组装成 `analysis_input_*.json` 和 `prompt_*.txt`
 - `local store`
   - `reports/`
   - `latest_run.json`
@@ -48,7 +51,7 @@ collector -> local store -> analyzer -> digest / alerts
   - `memory/index.json`
 - `analyzer`
   - Hermes / LLM 读取 `prompt_*.txt`
-  - 结合当前 memory backend 提供的记忆生成中文摘要和严格 JSON `MEMORY_UPDATE`
+  - 生成中文摘要和严格 JSON `MEMORY_UPDATE`
 - `digest / alerts`
   - Telegram 或其他下游通知逻辑
   - 根据 `warning`、`new_tweet_count` 和 summary 决定发送什么
@@ -58,14 +61,15 @@ collector -> local store -> analyzer -> digest / alerts
 - Playwright + Chromium（无头浏览器）
 - X.com（通过浏览器 cookies 认证）
 
-这四层故意分开，原因不是抽象，而是失败模式不同：
+这些层故意分开，原因不是抽象，而是失败模式不同：
 
 - collector 失败，通常是 cookies、选择器、页面加载、风控
+- analysis input 失败，通常是 collector schema、memory 读取、prompt 契约或本地 artifact 路径
 - local store 失败，通常是路径、JSON、Git 同步、状态漂移
 - analyzer 失败，通常是主题判断、记忆质量、输出格式
 - digest / alerts 失败，通常是错误地发送、漏发、误发
 
-因此当前实现不建议用“一个大 agent 从打开 X 一路干到发 Telegram”为主路径。更稳的方式是：collector 只负责拿材料，analyzer 只负责判断价值，digest / alerts 只负责对外输出。
+因此当前实现不建议用“一个大 agent 从打开 X 一路干到发 Telegram”为主路径。更稳的方式是：collector 只负责拿材料，analysis input builder 只负责组装分析输入，analyzer 只负责判断价值，digest / alerts 只负责对外输出。
 
 ## 多来源准备态
 
@@ -74,6 +78,7 @@ collector -> local store -> analyzer -> digest / alerts
 - `monitor.py collect` 直接负责 X 的抓取
 - 还没有改成 runtime 按 `registry.yaml` 动态加载所有 source
 - `collect` 已经开始额外输出标准化的 `collector_batch_<run_id>.json`
+- `build-analysis-input` 从标准化 batch 构建 `analysis_input_<run_id>.json` 和 `prompt_<run_id>.txt`
 
 但为了以后接 Reddit、雪球等来源，仓库现在已经补了两层契约：
 
@@ -162,24 +167,27 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 
 ### 1. 脚本接口与产物契约
 
-当前 `monitor.py` 是一个三段式 CLI，而不是单次跑完所有逻辑的脚本：
+当前 `monitor.py` 是一个分段式 CLI，而不是单次跑完所有逻辑的脚本：
 
-- `collect`：抓取账号页面，生成 `data/collector_batch/prompt/report/summary/memory_update/warning` 等产物路径，并刷新 `latest_run.json`
+- `collect`：抓取账号页面，生成 `data/collector_batch/run_metrics/warning` 等采集产物路径，并刷新 `latest_run.json`
+- `build-analysis-input`：读取 `collector_batch` 和当前 memory context，生成 `analysis_input/prompt/report`
 - `latest`：稳定读取 `latest_run.json`，避免 Hermes 通过 glob 猜文件名
 - `apply-memory`：解析 summary 尾部的 `MEMORY_UPDATE`，做主题归一化、幂等检查，并提交到当前 memory backend
 
-这三个命令共同构成 Hermes 的标准编排链路：
+这些命令共同构成 Hermes 的标准编排链路：
 
 1. `collect`
 2. `latest --field new_tweet_count`
-3. `latest --field prompt`
-4. 生成 summary
-5. `apply-memory`
+3. `build-analysis-input`
+4. `latest --field prompt`
+5. 生成 summary
+6. `apply-memory`
 
 其中 `latest_run.json` 是关键的“控制面索引”。它会记录当前 run 的：
 
 - `data`
 - `collector_batch`
+- `analysis_input`
 - `prompt`
 - `report`
 - `summary`
@@ -252,7 +260,7 @@ Hermes 社区提供了一个 `xitter` skill，封装了官方 API 的 `x-cli` �
 
 ### 4. 主题归类、claim 抽取与 MEMORY_UPDATE 协议
 
-Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重组多个账号的动态”，并把有价值的金融/地缘 claim 写入可追溯记忆。因此 `collect` 生成的 prompt 会要求模型输出 Telegram 正文，以及一个只供系统消费的 `MEMORY_UPDATE`。
+Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重组多个账号的动态”，并把有价值的金融/地缘 claim 写入可追溯记忆。因此 `build-analysis-input` 生成的 prompt 会要求模型输出 Telegram 正文，以及一个只供系统消费的 `MEMORY_UPDATE`。
 
 现在的正式协议是严格 JSON。例如：
 
@@ -422,7 +430,7 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 - `contradiction_updates_applied`
 - `already_applied`
 
-此外，`reports/run_metrics_*.json` 是每轮机器可读指标。`collect` 先写抓取健康指标，例如账号成功/失败、可见推文、新推文、warning 和运行耗时；`apply-memory` 再补分析指标，例如 `event_clusters`、`high_novelty_events`、候选告警、冲突数和实际 memory 写入数。它用于区分“真的没新信息”和“抓取/分析链路出问题”。
+此外，`reports/run_metrics_*.json` 是每轮机器可读指标。`collect` 先写抓取健康指标，例如账号成功/失败、可见推文、新推文、warning 和运行耗时；`build-analysis-input` 补 `analysis_input` 是否构建、输入条数、发现推荐数和关键词数；`apply-memory` 再补分析指标，例如 `event_clusters`、`high_novelty_events`、候选告警、冲突数和实际 memory 写入数。它用于区分“真的没新信息”和“抓取/分析链路出问题”。
 
 ### 6. 索引、锁与原子写
 
@@ -447,11 +455,18 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 `collect` 完成后，它会写入：
 
 - 本轮 run id
-- 产物路径
+- 采集产物路径
 - 新推文数量
 - warning 路径
-- `memory_index` 路径
 - `state` 路径
+
+`build-analysis-input` 完成后，它会补充：
+
+- `analysis_input` 路径
+- `prompt` 路径
+- `report` 路径
+- `memory_index` 路径
+- analysis input 构建指标
 
 `apply-memory` 完成后，它还会补充：
 
@@ -493,7 +508,7 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 │   └── x/
 │       └── source.yaml     # X 来源定义模板
 ├── references/
-│   ├── architecture.md     # 四层边界、契约和职责分工
+│   ├── architecture.md     # 分层边界、契约和职责分工
 │   └── collector-schema.md # 统一 collector 输出 schema
 ├── memory/                 # 长期记忆目录
 │   ├── state.json          # 去重状态（建议提交到 git）
@@ -512,8 +527,9 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 ├── reports/                # 输出目录
 │   ├── data_YYYYMMDD_HHMMSS.json     # 原始数据（JSON）
 │   ├── collector_batch_YYYYMMDD_HHMMSS.json # 标准化 collector batch
-│   ├── prompt_YYYYMMDD_HHMMSS.txt    # LLM prompt
-│   ├── report_YYYYMMDD_HHMMSS.txt    # 人类可读报告
+│   ├── analysis_input_YYYYMMDD_HHMMSS.json # replayable analyzer input
+│   ├── prompt_YYYYMMDD_HHMMSS.txt    # LLM prompt（由 build-analysis-input 生成）
+│   ├── report_YYYYMMDD_HHMMSS.txt    # 人类可读报告（由 build-analysis-input 生成）
 │   ├── summary_YYYYMMDD_HHMMSS.txt   # Hermes 生成的完整总结（含 MEMORY_UPDATE）
 │   ├── memory_update_YYYYMMDD_HHMMSS.json  # 解析后的记忆更新
 │   ├── run_metrics_YYYYMMDD_HHMMSS.json    # 每轮抓取、分析和 memory 写入指标
@@ -530,6 +546,7 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 ```bash
 cd ~/.hermes/skills/signal-radar
 python3 monitor.py collect --config config.yaml
+python3 monitor.py build-analysis-input --config config.yaml
 ```
 
 常用查询命令：
@@ -537,6 +554,7 @@ python3 monitor.py collect --config config.yaml
 ```bash
 python3 monitor.py latest --config config.yaml --field new_tweet_count
 python3 monitor.py latest --config config.yaml --field collector_batch
+python3 monitor.py latest --config config.yaml --field analysis_input
 python3 monitor.py latest --config config.yaml --field prompt
 python3 monitor.py latest --config config.yaml --field run_metrics
 python3 monitor.py latest --config config.yaml --field warning
@@ -549,10 +567,11 @@ python3 monitor.py latest --config config.yaml --field state
 
 ```
 每 2 小时运行 python3 ~/.hermes/skills/signal-radar/monitor.py collect --config ~/.hermes/skills/signal-radar/config.yaml。
-然后读取 latest_run.json 里的 new_tweet_count、warning 和 prompt 路径。
+然后读取 latest_run.json 里的 new_tweet_count 和 warning。
 如果 warning 存在，直接把 warning 发到 Telegram。
 如果 new_tweet_count 为 0，就告诉我本轮没有新推文并停止。
-如果有新推文，就用 prompt 生成中文简报。
+如果有新推文，先运行 python3 ~/.hermes/skills/signal-radar/monitor.py build-analysis-input --config ~/.hermes/skills/signal-radar/config.yaml。
+然后读取 latest_run.json 里的 prompt 路径，用 prompt 生成中文简报。
 发送到 Telegram 时不要包含 MEMORY_UPDATE 段。
 完整总结末尾必须带严格 JSON 的 MEMORY_UPDATE，
 并且把完整总结保存到 latest_run.json 里的 summary 路径，

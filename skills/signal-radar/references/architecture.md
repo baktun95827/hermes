@@ -1,27 +1,30 @@
-# Signal Radar 四层架构
+# Signal Radar 分层架构
 
 这份文档定义 `signal-radar` 的稳定边界。只要你在判断“某段逻辑到底该放在哪”，就应该先看这里，而不是直接改实现。
 
 ## 目标
 
-`signal-radar` 不是一个“大模型从打开网页一路干到发 Telegram”的单体 agent，而是一条长期运行的工作流。为了让系统更容易调试、更容易换实现，也更容易定位问题，当前设计故意拆成四层：
+`signal-radar` 不是一个“大模型从打开网页一路干到发 Telegram”的单体 agent，而是一条长期运行的工作流。为了让系统更容易调试、更容易换实现，也更容易定位问题，当前设计故意拆成清晰的文件边界层：
 
 ```text
-collector -> local store -> analyzer -> digest / alerts
+collector -> analysis input -> local store -> analyzer -> digest / alerts
 ```
 
-在当前实现里，这四层大致对应：
+在当前实现里，这些层大致对应：
 
 - `collector`
   - `monitor.py collect`
   - `collectors/registry.yaml` 和 `collectors/<source>/source.yaml` 现在作为多源接入契约存在，但运行时尚未切到 registry 驱动
+- `analysis input`
+  - `monitor.py build-analysis-input`
+  - 读取 `collector_batch` 和 memory context，写出 `analysis_input` 与 `prompt`
 - `local store`
   - `reports/*.json|*.txt`
   - `latest_run.json`
   - `MemoryBackend`
   - `memory/`（当前 file backend）
 - `analyzer`
-  - LLM 读取 prompt、结合 memory backend 暴露的记忆生成摘要和 `MEMORY_UPDATE`
+  - LLM 读取 prompt，生成摘要和 `MEMORY_UPDATE`
 - `digest / alerts`
   - Telegram 或其他下游通知逻辑
 - `monitor.py apply-memory`
@@ -29,13 +32,17 @@ collector -> local store -> analyzer -> digest / alerts
 
 ## 为什么要分层
 
-因为这四类问题的失败模式完全不同：
+因为这些问题的失败模式完全不同：
 
 - collector 失败
   - cookies 过期
   - 登录墙
   - selector 变化
   - 页面慢或风控
+- analysis input 失败
+  - collector schema 不兼容
+  - memory context 读取失败
+  - prompt 契约或路径错误
 - local store 失败
   - 路径解析错误
   - JSON 损坏
@@ -102,8 +109,6 @@ collector 未来不应该只对应 X。它应该允许不同来源使用不同 t
 
 - `reports/data_<run_id>.json`
 - `reports/collector_batch_<run_id>.json`
-- `reports/prompt_<run_id>.txt`
-- `reports/report_<run_id>.txt`
 - `reports/run_metrics_<run_id>.json`
 - 可选的 `reports/warning_<run_id>.txt`
 - `latest_run.json`
@@ -115,6 +120,8 @@ collector 未来不应该只对应 X。它应该允许不同来源使用不同 t
 
 - 最终主题判断
 - 账号画像归纳
+- 读取长期 memory
+- 生成 analyzer prompt
 - Telegram 发消息
 - 主观决定“这条值不值得进日报”
 
@@ -125,7 +132,6 @@ collector 仍然可以做一些边界清晰的判断，比如：
 - 按 `seen_ids` 去重
 - 判断页面状态是 `ok`、`login_wall`、`no_visible_tweets` 还是 `error`
 - 统计 mentions 和基础互动数
-- 生成 analyzer 用的 prompt 骨架
 
 ### 典型失败信号
 
@@ -136,7 +142,48 @@ collector 仍然可以做一些边界清晰的判断，比如：
 
 collector 的责任是把这些失败表达成文件和 manifest 字段，而不是自己生成“看起来像摘要”的用户输出。
 
-## 第 2 层：Local Store
+## 第 2 层：Analysis Input
+
+### 目标
+
+把标准化 collector batch、发现提示和当前 memory context 组装成可回放的 analyzer 输入。
+
+### 当前负责模块
+
+- `monitor.py build-analysis-input`
+- `reports/analysis_input_<run_id>.json`
+- `reports/prompt_<run_id>.txt`
+- `reports/report_<run_id>.txt`
+
+### 输入
+
+- `reports/collector_batch_<run_id>.json`
+- `config.yaml`
+- 当前 `MemoryBackend`
+
+### 输出
+
+- `reports/analysis_input_<run_id>.json`
+- `reports/prompt_<run_id>.txt`
+- `reports/report_<run_id>.txt`
+- 更新后的 `latest_run.json`
+- 更新后的 `reports/run_metrics_<run_id>.json`
+
+### 应该负责什么
+
+- 将 source-agnostic collector items 转换成 analyzer 可读材料
+- 读取近期主题、标的、事件、宏观和来源记忆
+- 生成 discovery hints 和关键词
+- 生成 prompt
+
+### 不应该负责什么
+
+- 打开浏览器或重新抓取网页
+- 对用户发送摘要
+- 写入长期 memory
+- 代替 LLM 判断 claim 是否真实或值得记忆
+
+## 第 3 层：Local Store
 
 ### 目标
 
@@ -161,6 +208,7 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 
 - `reports/data_<run_id>.json`
 - `reports/collector_batch_<run_id>.json`
+- `reports/analysis_input_<run_id>.json`
 - `reports/prompt_<run_id>.txt`
 - `reports/report_<run_id>.txt`
 - `reports/summary_<run_id>.txt`
@@ -170,7 +218,7 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 
 它们很重要，但不是长期记忆的最终真源。
 
-`run_metrics_<run_id>.json` 是机器可读健康指标。`collect` 写入账号抓取、可见推文、新推文、warning 和运行耗时；`apply-memory` 回填事件簇、强增量事件、候选告警、冲突数和各类 memory 写入数。它用于判断“没有新信息”和“系统链路异常”之间的区别。
+`run_metrics_<run_id>.json` 是机器可读健康指标。`collect` 写入账号抓取、可见推文、新推文、warning 和运行耗时；`build-analysis-input` 回填 analyzer input 是否构建、输入条数、发现推荐数和关键词数；`apply-memory` 回填事件簇、强增量事件、候选告警、冲突数和各类 memory 写入数。它用于判断“没有新信息”和“系统链路异常”之间的区别。
 
 #### 运行 manifest
 
@@ -188,6 +236,7 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `status`
 - `paths.data`
 - `paths.collector_batch`
+- `paths.analysis_input`
 - `paths.prompt`
 - `paths.report`
 - `paths.summary`
@@ -244,7 +293,7 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 
 local store 的职责是“保存状态并暴露清晰契约”，不是“替业务做判断”。
 
-## 第 3 层：Analyzer
+## 第 4 层：Analyzer
 
 ### 目标
 
@@ -252,16 +301,14 @@ local store 的职责是“保存状态并暴露清晰契约”，不是“替�
 
 ### 当前负责模块
 
-- `collect` 生成的 prompt
+- `build-analysis-input` 生成的 prompt
 - LLM 总结步骤
 - 严格 JSON 的 `MEMORY_UPDATE` 协议
 
 ### 输入
 
-- `reports/data_<run_id>.json`
+- `reports/analysis_input_<run_id>.json`
 - `reports/prompt_<run_id>.txt`
-- `memory/`
-- `config.yaml` 里的主题提示和 alias 配置
 
 ### 输出
 
@@ -317,7 +364,7 @@ analyzer 至少应该回答这些问题：
 
 对于社交媒体内容，analyzer 应该保守标注验证状态。单一来源通常只能是 `unverified` 或 `plausible`；只有官方或多源证据支持时，才应该输出 `confirmed`。
 
-## 第 4 层：Digest / Alerts
+## 第 5 层：Digest / Alerts
 
 ### 目标
 
@@ -363,25 +410,34 @@ collector 必须留下足够多的本地证据，至少包括：
 
 - 结构化数据 JSON
 - 标准化 collector batch JSON
-- prompt 文本
-- report 文本
 - 需要时的 warning 文件
 - 稳定可读的 latest manifest
 
 如果 collector 失败了，但本地什么都没留下，后续排查会很被动。
 
-### Local Store -> Analyzer
+### Local Store -> Analysis Input
 
-analyzer 依赖的应该是稳定文件路径，而不是浏览器上下文。当前主契约是：
+analysis input builder 依赖的应该是稳定文件路径，而不是浏览器上下文。当前主契约是：
 
-- `latest --field prompt`
 - `latest --field collector_batch`
-- `latest --field summary`
-- `latest --field state`
 - `latest --field memory_dir`
 - `latest --field memory_backend`
 
-如果未来进入多源模式，analyzer 还应该优先消费统一的 collector schema，而不是来源专属字段。
+它输出：
+
+- `latest --field analysis_input`
+- `latest --field prompt`
+
+如果未来进入多源模式，analysis input builder 应该优先消费统一的 collector schema，而不是来源专属字段。
+
+### Analysis Input -> Analyzer
+
+analyzer 依赖的应该是稳定 prompt 和 replayable input，而不是直接读浏览器或扫描目录。当前主契约是：
+
+- `latest --field prompt`
+- `latest --field analysis_input`
+- `latest --field summary`
+- `latest --field state`
 
 ### Analyzer -> Local Store
 
@@ -411,6 +467,14 @@ digest 应该从 manifest 做判断，而不是自己扫描目录、猜最新文
 - memory 文件 schema
 - dedupe state schema
 - manifest schema
+
+### 属于 analysis input 的逻辑
+
+- collector batch 到 prompt 的转换
+- memory context 读取和压缩
+- discovery hints
+- keyword hints
+- analysis_input artifact schema
 
 ### 属于 analyzer 的逻辑
 
@@ -445,7 +509,7 @@ digest 应该从 manifest 做判断，而不是自己扫描目录、猜最新文
 
 ### 规则 5
 
-不要因为有一个上层 orchestrator，就把所有边界重新揉成一个 giant agent。上层可以串联四层，但不应该抹掉四层之间的契约。
+不要因为有一个上层 orchestrator，就把所有边界重新揉成一个 giant agent。上层可以串联各层，但不应该抹掉层与层之间的契约。
 
 ## 本地开发与 VPS 运行
 
@@ -473,7 +537,7 @@ digest 应该从 manifest 做判断，而不是自己扫描目录、猜最新文
 
 现在已经完成：
 
-- 四层架构边界
+- 分层架构边界
 - collector registry 设计
 - source definition 设计
 - 统一 collector 输出 schema 设计
@@ -493,6 +557,6 @@ digest 应该从 manifest 做判断，而不是自己扫描目录、猜最新文
 - 可以换 Playwright selector，而不改 analyzer 契约
 - 可以换模型，而不改 collector 契约
 - 可以换 Telegram 以外的通知渠道，而不改 memory 写入逻辑
-- 以后就算把 `monitor.py` 拆成多个脚本，也不需要推翻这四层模型
+- 以后就算把 `monitor.py` 拆成多个脚本，也不需要推翻这套分层模型
 
 这也是为什么现在就要把边界写清楚。
