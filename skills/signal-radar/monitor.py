@@ -86,6 +86,16 @@ MEMORY_ACTIONS = {
     "unknown",
 }
 ALERT_LEVELS = {"none", "watch", "important", "urgent"}
+THESIS_DIRECTIONS = {"bull", "bear", "neutral", "mixed", "unknown"}
+THESIS_STATUSES = {
+    "active",
+    "watch",
+    "strengthened",
+    "weakened",
+    "invalidated",
+    "superseded",
+    "unknown",
+}
 SKIP_MEMORY_ACTIONS = {"ignore", "ignored", "reject", "rejected", "skip", "no_op", "noop"}
 SKIP_NOVELTY_VALUES = {"duplicate", "duplicated", "none", "low_value", "no_value"}
 SKIP_SIGNAL_TYPES = {"noise"}
@@ -192,6 +202,48 @@ def normalize_alert_level(value: Any) -> str:
     return level if level in ALERT_LEVELS else "none"
 
 
+def normalize_thesis_direction(value: Any) -> str:
+    direction = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "long": "bull",
+        "positive": "bull",
+        "upside": "bull",
+        "多": "bull",
+        "多头": "bull",
+        "short": "bear",
+        "negative": "bear",
+        "downside": "bear",
+        "risk": "bear",
+        "空": "bear",
+        "空头": "bear",
+        "base": "neutral",
+        "balanced": "neutral",
+        "双向": "mixed",
+    }
+    direction = aliases.get(direction, direction)
+    return direction if direction in THESIS_DIRECTIONS else "unknown"
+
+
+def normalize_thesis_status(value: Any) -> str:
+    status = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "new": "active",
+        "created": "active",
+        "monitor": "watch",
+        "strengthen": "strengthened",
+        "stronger": "strengthened",
+        "upgraded": "strengthened",
+        "weaken": "weakened",
+        "weaker": "weakened",
+        "downgraded": "weakened",
+        "invalid": "invalidated",
+        "rejected": "invalidated",
+        "supersede": "superseded",
+    }
+    status = aliases.get(status, status)
+    return status if status in THESIS_STATUSES else "active"
+
+
 def coerce_float_or_none(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -296,6 +348,188 @@ def stable_claim_id(prefix: str, update: dict[str, Any], scope_keys: list[str]) 
         json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     return f"{prefix}_{digest[:16]}"
+
+
+def stable_thesis_id(
+    entity_id: str,
+    thesis_update: dict[str, Any],
+    update: dict[str, Any],
+    claim: str,
+) -> str:
+    raw_thesis_id = clean_text(
+        thesis_update.get("thesis_id")
+        or thesis_update.get("id")
+        or update.get("thesis_id")
+    )
+    if raw_thesis_id:
+        return safe_filename(raw_thesis_id)
+
+    identity = {
+        "entity_id": entity_id,
+        "title": clean_text(thesis_update.get("title") or update.get("thesis_title")),
+        "direction": normalize_thesis_direction(
+            thesis_update.get("direction") or update.get("thesis_direction")
+        ),
+        "claim": claim,
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"thesis_{digest[:16]}"
+
+
+def has_embedded_thesis_update(update: dict[str, Any]) -> bool:
+    if isinstance(update.get("thesis_update"), dict):
+        return True
+    return any(
+        update.get(key) is not None
+        for key in (
+            "thesis_id",
+            "thesis_title",
+            "thesis_direction",
+            "thesis_status",
+            "bull_case",
+            "bear_case",
+            "key_watchpoints",
+            "invalidation_points",
+            "catalysts",
+            "thesis_impact",
+            "what_changed",
+        )
+    )
+
+
+def build_embedded_thesis_update(
+    update: dict[str, Any],
+    entity_id: str,
+    claim: str,
+    claim_id: str,
+    evidence_item_ids: list[str],
+    source_ids: list[str],
+    signal_evaluation: dict[str, Any],
+    seen_at: str,
+    update_id: str,
+) -> dict[str, Any] | None:
+    raw = update.get("thesis_update")
+    if not isinstance(raw, dict):
+        if not has_embedded_thesis_update(update):
+            return None
+        raw = {}
+
+    title = clean_text(raw.get("title") or update.get("thesis_title"))
+    if not title:
+        title = claim[:80] if len(claim) <= 80 else f"{claim[:77]}..."
+
+    thesis_id = stable_thesis_id(entity_id, raw, update, claim)
+    direction = normalize_thesis_direction(
+        raw.get("direction") or update.get("thesis_direction")
+    )
+    thesis_status = normalize_thesis_status(
+        raw.get("thesis_status")
+        or raw.get("status")
+        or update.get("thesis_status")
+        or ("superseded" if signal_evaluation["memory_action"] == "supersede" else None)
+    )
+    return {
+        "thesis_id": thesis_id,
+        "title": title,
+        "direction": direction,
+        "thesis_status": thesis_status,
+        "bull_case": coerce_string_list(raw.get("bull_case") or update.get("bull_case")),
+        "bear_case": coerce_string_list(raw.get("bear_case") or update.get("bear_case")),
+        "key_watchpoints": coerce_string_list(
+            raw.get("key_watchpoints") or update.get("key_watchpoints")
+        ),
+        "invalidation_points": coerce_string_list(
+            raw.get("invalidation_points") or update.get("invalidation_points")
+        ),
+        "catalysts": coerce_string_list(raw.get("catalysts") or update.get("catalysts")),
+        "what_changed": clean_text(raw.get("what_changed") or update.get("what_changed")),
+        "thesis_impact": clean_text(
+            raw.get("thesis_impact") or update.get("thesis_impact")
+        ),
+        "prior_claim_refs": coerce_string_list(
+            raw.get("prior_claim_refs") or update.get("prior_claim_refs")
+        ),
+        "update_entry": {
+            "time": seen_at,
+            "update_id": update_id,
+            "claim_id": claim_id,
+            "what_changed": clean_text(
+                raw.get("what_changed") or update.get("what_changed")
+            ),
+            "thesis_impact": clean_text(
+                raw.get("thesis_impact") or update.get("thesis_impact")
+            ),
+            "signal_evaluation": signal_evaluation,
+            "evidence_item_ids": evidence_item_ids,
+            "source_ids": source_ids,
+        },
+    }
+
+
+def merge_embedded_thesis(
+    existing: dict[str, Any],
+    thesis_update: dict[str, Any],
+    seen_at: str,
+) -> dict[str, Any]:
+    if not isinstance(existing, dict):
+        existing = {}
+
+    thesis_id = thesis_update["thesis_id"]
+    merged = dict(existing)
+    merged.update(
+        {
+            "thesis_id": thesis_id,
+            "title": thesis_update["title"] or existing.get("title") or thesis_id,
+            "direction": (
+                thesis_update["direction"]
+                if thesis_update["direction"] != "unknown"
+                else existing.get("direction") or "unknown"
+            ),
+            "thesis_status": (
+                thesis_update["thesis_status"]
+                if thesis_update["thesis_status"] != "unknown"
+                else existing.get("thesis_status") or "active"
+            ),
+            "created_at": existing.get("created_at") or seen_at,
+            "updated_at": seen_at,
+            "last_update_id": thesis_update["update_entry"]["update_id"],
+        }
+    )
+
+    for key in (
+        "bull_case",
+        "bear_case",
+        "key_watchpoints",
+        "invalidation_points",
+        "catalysts",
+        "prior_claim_refs",
+    ):
+        merged[key] = unique_preserving_order(
+            coerce_string_list(existing.get(key)) + thesis_update[key]
+        )[-30:]
+
+    related_claim_ids = unique_preserving_order(
+        coerce_string_list(existing.get("related_claim_ids"))
+        + [thesis_update["update_entry"]["claim_id"]]
+    )
+    merged["related_claim_ids"] = related_claim_ids[-50:]
+
+    updates = existing.get("updates", [])
+    if not isinstance(updates, list):
+        updates = []
+    update_entry = thesis_update["update_entry"]
+    if update_entry["what_changed"] or update_entry["thesis_impact"]:
+        updates.append(update_entry)
+    merged["updates"] = updates[-30:]
+
+    if thesis_update["what_changed"]:
+        merged["latest_what_changed"] = thesis_update["what_changed"]
+    if thesis_update["thesis_impact"]:
+        merged["latest_thesis_impact"] = thesis_update["thesis_impact"]
+    merged["latest_signal_evaluation"] = update_entry["signal_evaluation"]
+    return merged
 
 
 def merge_dicts(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -1032,7 +1266,18 @@ class FileMemoryStore:
             or update.get("symbol")
             or update.get("display_name")
         )
-        claim = clean_text(update.get("claim") or update.get("summary"))
+        raw_thesis_update = (
+            update.get("thesis_update")
+            if isinstance(update.get("thesis_update"), dict)
+            else {}
+        )
+        claim = clean_text(
+            update.get("claim")
+            or update.get("summary")
+            or raw_thesis_update.get("what_changed")
+            or raw_thesis_update.get("title")
+            or update.get("thesis_title")
+        )
         if not entity_id or not claim:
             return False
 
@@ -1050,7 +1295,9 @@ class FileMemoryStore:
                 "created_at": seen_at,
                 "updated_at": seen_at,
                 "claims": {},
+                "theses": {},
                 "recent_claim_ids": [],
+                "recent_thesis_ids": [],
                 "applied_update_ids": [],
                 "last_update_id": None,
             },
@@ -1082,11 +1329,23 @@ class FileMemoryStore:
         )
         signal_evaluation = build_signal_evaluation(update)
         cluster_id = clean_text(update.get("cluster_id"))
+        thesis_update = build_embedded_thesis_update(
+            update=update,
+            entity_id=entity_id,
+            claim=claim,
+            claim_id=claim_id,
+            evidence_item_ids=evidence_item_ids,
+            source_ids=source_ids,
+            signal_evaluation=signal_evaluation,
+            seen_at=seen_at,
+            update_id=update_id,
+        )
         claims[claim_id] = {
             "claim_id": claim_id,
             "cluster_id": cluster_id,
             "claim": claim,
             "claim_type": clean_text(update.get("claim_type")) or "signal",
+            "thesis_ids": [thesis_update["thesis_id"]] if thesis_update else [],
             "verification_status": normalize_verification_status(
                 update.get("verification_status")
             ),
@@ -1105,6 +1364,23 @@ class FileMemoryStore:
 
         recent_claim_ids = coerce_string_list(payload.get("recent_claim_ids"))
         recent_claim_ids = unique_preserving_order(recent_claim_ids + [claim_id])[-30:]
+        theses = payload.get("theses", {})
+        if not isinstance(theses, dict):
+            theses = {}
+        recent_thesis_ids = coerce_string_list(payload.get("recent_thesis_ids"))
+        if thesis_update:
+            thesis_id = thesis_update["thesis_id"]
+            existing_thesis = theses.get(thesis_id, {})
+            if not isinstance(existing_thesis, dict):
+                existing_thesis = {}
+            theses[thesis_id] = merge_embedded_thesis(
+                existing=existing_thesis,
+                thesis_update=thesis_update,
+                seen_at=seen_at,
+            )
+            recent_thesis_ids = unique_preserving_order(
+                recent_thesis_ids + [thesis_id]
+            )[-30:]
         payload.update(
             {
                 "schema_version": "entity-memory/v1",
@@ -1136,7 +1412,9 @@ class FileMemoryStore:
                 ),
                 "latest_signal_evaluation": signal_evaluation,
                 "claims": claims,
+                "theses": theses,
                 "recent_claim_ids": recent_claim_ids,
+                "recent_thesis_ids": recent_thesis_ids,
                 "applied_update_ids": (applied_update_ids + [entry_update_id])[-100:],
                 "last_update_id": update_id,
             }
@@ -1573,6 +1851,20 @@ class FileMemoryStore:
                         claim = clean_text(claim_payload.get("claim"))
                         if claim:
                             claim_texts.append(claim)
+            thesis_ids = coerce_string_list(payload.get("recent_thesis_ids"))[-3:]
+            theses = payload.get("theses", {})
+            thesis_texts: list[str] = []
+            if isinstance(theses, dict):
+                for thesis_id in thesis_ids:
+                    thesis_payload = theses.get(thesis_id, {})
+                    if isinstance(thesis_payload, dict):
+                        title = clean_text(thesis_payload.get("title"))
+                        direction = clean_text(thesis_payload.get("direction"))
+                        status = clean_text(thesis_payload.get("thesis_status"))
+                        if title:
+                            thesis_texts.append(
+                                f"{title} [{direction or 'unknown'}/{status or 'active'}]"
+                            )
             memories.append(
                 {
                     "entity_id": clean_text(payload.get("entity_id")),
@@ -1580,6 +1872,7 @@ class FileMemoryStore:
                     "entity_type": clean_text(payload.get("entity_type")),
                     "updated_at": clean_text(payload.get("updated_at")),
                     "recent_claims": claim_texts,
+                    "recent_theses": thesis_texts,
                 }
             )
         memories.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
@@ -1681,6 +1974,9 @@ class FileMemoryStore:
                 "claim_count": len(payload.get("claims", {}))
                 if isinstance(payload.get("claims"), dict)
                 else 0,
+                "thesis_count": len(payload.get("theses", {}))
+                if isinstance(payload.get("theses"), dict)
+                else 0,
             }
 
         events: dict[str, Any] = {}
@@ -1737,7 +2033,7 @@ class FileMemoryStore:
             }
 
         index_payload = {
-            "version": 3,
+            "version": 4,
             "updated_at": utc_now().isoformat(),
             "account_count": len(accounts),
             "theme_count": len(themes),
@@ -2484,10 +2780,13 @@ def build_llm_prompt(
         history_context += "\n近期标的/公司记忆:\n"
         for item in recent_entity_memories:
             claims = "；".join(item.get("recent_claims") or []) or "（暂无近期 claim）"
+            theses = "；".join(item.get("recent_theses") or [])
             history_context += (
                 f"  - {item['display_name'] or item['entity_id']}"
                 f" [{item.get('entity_type') or 'unknown'}]: {claims}\n"
             )
+            if theses:
+                history_context += f"    thesis: {theses}\n"
     if recent_event_memories:
         history_context += "\n近期事件记忆:\n"
         for item in recent_event_memories:
@@ -2550,6 +2849,19 @@ def build_llm_prompt(
         "confidence": 0.6,
         "evidence_count": 1,
         "source_count": 1
+      },
+      "thesis_update": {
+        "thesis_id": "yingweike_liquid_cooling_growth",
+        "title": "液冷/温控业务增长 thesis",
+        "direction": "bull",
+        "thesis_status": "strengthened",
+        "bull_case": ["算力基础设施扩张可能提升液冷/温控需求"],
+        "bear_case": ["竞争加剧或项目节奏不及预期可能压缩估值和毛利率"],
+        "key_watchpoints": ["订单验证", "毛利率变化", "大客户进展"],
+        "invalidation_points": ["订单兑现不及预期", "毛利率持续下滑"],
+        "catalysts": ["业绩预告", "大客户招标", "行业政策"],
+        "what_changed": "本次新增的是温控业务弹性讨论，不是已验证订单事实。",
+        "thesis_impact": "小幅增强多头 thesis，但仍需要公告或产业链数据确认。"
       },
       "why_it_matters": "影响市场对公司收入弹性和估值的预期。",
       "evidence_item_ids": ["x:123"],
@@ -2651,10 +2963,12 @@ def build_llm_prompt(
 16. 同一事件簇可以共用 `cluster_id`，格式建议为 `xcluster:<主题>-<日期>`；没有把握时可以省略
 17. `alert_candidates` 只表示候选告警，不等于一定发送；只有 `watch`、`important`、`urgent` 才值得写入
 18. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
-19. `event_updates` 用于会随时间发展的事件，按时间线追加
-20. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
-21. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度，可带 `source_profile.topic_strength`、`repeat_tendency`、`confirmation_required`
-22. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
+19. 如果标的信息会改变投资假设，在对应 `entity_updates` 内嵌 `thesis_update`，维护 `bull_case`、`bear_case`、`key_watchpoints`、`invalidation_points`、`catalysts`、`thesis_status`
+20. `thesis_update.thesis_status` 用 `active`、`watch`、`strengthened`、`weakened`、`invalidated`、`superseded`；`direction` 用 `bull`、`bear`、`neutral`、`mixed`
+21. `event_updates` 用于会随时间发展的事件，按时间线追加
+22. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
+23. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度，可带 `source_profile.topic_strength`、`repeat_tendency`、`confirmation_required`
+24. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
 {theme_hint}
 ## 历史上下文
 {history_context if history_context else "（首次运行，无历史数据）"}

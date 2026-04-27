@@ -129,7 +129,7 @@ Generate a Chinese brief from that prompt with this output discipline:
 - Use `secondary_themes` to map each一级主题 to more specific二级主题
 - Use `account_notes` with usernames as keys and no leading `@`
 - Use `signal_evaluations` and per-claim `signal_evaluation` to decide whether a signal is new, repeated, noise, worth writing, or worth alerting
-- Use `entity_updates` for stocks, companies, sectors, and supply-chain objects
+- Use `entity_updates` for stocks, companies, sectors, and supply-chain objects; include `thesis_update` when a signal changes an investment thesis
 - Use `event_updates` for time-evolving events such as Iran/Hormuz
 - Use `macro_updates` for macro environment, liquidity, energy, and commodity trends
 - Use `source_assessments` for agent-maintained source notes
@@ -180,6 +180,19 @@ Expected `MEMORY_UPDATE` shape:
         "alert_level": "watch",
         "confidence": 0.6
       },
+      "thesis_update": {
+        "thesis_id": "yingweike_liquid_cooling_growth",
+        "title": "液冷/温控业务增长 thesis",
+        "direction": "bull",
+        "thesis_status": "strengthened",
+        "bull_case": ["算力基础设施扩张可能提升液冷/温控需求"],
+        "bear_case": ["竞争加剧或项目节奏不及预期可能压缩估值和毛利率"],
+        "key_watchpoints": ["订单验证", "毛利率变化", "大客户进展"],
+        "invalidation_points": ["订单兑现不及预期", "毛利率持续下滑"],
+        "catalysts": ["业绩预告", "大客户招标", "行业政策"],
+        "what_changed": "本次新增的是温控业务弹性讨论，不是已验证订单事实。",
+        "thesis_impact": "小幅增强多头 thesis，但仍需要公告或产业链数据确认。"
+      },
       "evidence_item_ids": ["x:123"],
       "source_ids": ["x:example_user"]
     }
@@ -224,6 +237,7 @@ Behavior notes:
 - 一级主题和二级主题都会先经过 alias 归一化再写入 memory
 - structured updates with `verification_status: rejected`, explicit skip actions, `signal_type: noise`, `memory_action: skip|reject`, or no novelty are ignored
 - accepted claim updates store `cluster_id`, `signal_evaluation`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend
+- accepted `entity_updates.thesis_update` entries are merged into the entity file's `theses` map; this keeps bull/bear cases, watchpoints, invalidation points, catalysts, and thesis status next to the related claims
 - `alert_candidates` are recorded in `memory_update_*.json`; sending them is a downstream digest/alert decision
 - `latest --field memory_backend` returns the active memory backend; currently this should be `file`
 - `latest --field state` returns the synced state file path

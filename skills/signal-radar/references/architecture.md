@@ -266,6 +266,7 @@ local store 的职责是“保存状态并暴露清晰契约”，不是“替�
   - `account_notes`
   - `signal_evaluations`
   - `entity_updates`
+  - `entity_updates[].thesis_update`
   - `event_updates`
   - `macro_updates`
   - `source_assessments`
@@ -292,6 +293,7 @@ analyzer 至少应该回答这些问题：
 - 哪些内容是新事实、新角度、复读或噪音
 - 每个重要信号的 `novelty_level`、`evidence_strength`、`memory_action` 和 `alert_level` 应该是什么
 - 哪些金融标的、公司、行业链条 claim 值得进入 `entity_updates`
+- 哪些标的信息改变了 bull/bear thesis、关键验证点、证伪条件或催化时间表
 - 哪些持续事件需要按时间线进入 `event_updates`
 - 哪些宏观背景或趋势需要进入 `macro_updates`
 - 哪些来源可信度或确认要求需要更新到 `source_assessments`

@@ -38,7 +38,7 @@ Accepted `claim_type` values:
 New keys:
 
 - `signal_evaluations`: run-level or cluster-level value judgments, including skipped signals
-- `entity_updates`: stocks, companies, sectors, supply-chain objects
+- `entity_updates`: stocks, companies, sectors, supply-chain objects; may include embedded `thesis_update`
 - `event_updates`: time-evolving events such as Iran/Hormuz or wars
 - `macro_updates`: macro environment, liquidity, rates, energy, commodities
 - `source_assessments`: agent-maintained source notes
@@ -66,6 +66,29 @@ Accepted values:
 - `evidence_strength`: `weak`, `single_source`, `multi_source`, `official`
 - `memory_action`: `write`, `merge`, `skip`, `supersede`, `reject`
 - `alert_level`: `none`, `watch`, `important`, `urgent`
+
+`entity_updates.thesis_update` is the first thesis-memory layer. It is embedded in entity memory instead of using a separate `memory/theses/` directory for now:
+
+```json
+{
+  "thesis_id": "yingweike_liquid_cooling_growth",
+  "title": "液冷/温控业务增长 thesis",
+  "direction": "bull",
+  "thesis_status": "strengthened",
+  "bull_case": ["算力基础设施扩张可能提升液冷/温控需求"],
+  "bear_case": ["竞争加剧或项目节奏不及预期可能压缩估值和毛利率"],
+  "key_watchpoints": ["订单验证", "毛利率变化", "大客户进展"],
+  "invalidation_points": ["订单兑现不及预期", "毛利率持续下滑"],
+  "catalysts": ["业绩预告", "大客户招标", "行业政策"],
+  "what_changed": "本次新增的是温控业务弹性讨论，不是已验证订单事实。",
+  "thesis_impact": "小幅增强多头 thesis，但仍需要公告或产业链数据确认。"
+}
+```
+
+Accepted thesis values:
+
+- `direction`: `bull`, `bear`, `neutral`, `mixed`
+- `thesis_status`: `active`, `watch`, `strengthened`, `weakened`, `invalidated`, `superseded`
 
 Example:
 
@@ -110,6 +133,19 @@ Example:
         "memory_action": "write",
         "alert_level": "watch",
         "confidence": 0.6
+      },
+      "thesis_update": {
+        "thesis_id": "yingweike_liquid_cooling_growth",
+        "title": "液冷/温控业务增长 thesis",
+        "direction": "bull",
+        "thesis_status": "strengthened",
+        "bull_case": ["算力基础设施扩张可能提升液冷/温控需求"],
+        "bear_case": ["竞争加剧或项目节奏不及预期可能压缩估值和毛利率"],
+        "key_watchpoints": ["订单验证", "毛利率变化", "大客户进展"],
+        "invalidation_points": ["订单兑现不及预期", "毛利率持续下滑"],
+        "catalysts": ["业绩预告", "大客户招标", "行业政策"],
+        "what_changed": "本次新增的是温控业务弹性讨论，不是已验证订单事实。",
+        "thesis_impact": "小幅增强多头 thesis，但仍需要公告或产业链数据确认。"
       },
       "why_it_matters": "影响市场对公司收入弹性和估值的预期。",
       "evidence_item_ids": ["x:123"],
@@ -200,6 +236,14 @@ When using `memory_backend: file`, committed long-run memory lives under `memory
 For accepted updates, `apply-memory` derives a stable `claim_id` when the analyzer does not provide one. This gives idempotent writes and prevents one summary retry from inflating memory.
 
 Accepted claim updates store `cluster_id`, `signal_evaluation`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend. These fields are the first layer of memory pollution control; they do not yet implement automatic decay.
+
+When an accepted `entity_updates` item includes `thesis_update`, the file backend also updates `memory/entities/<entity-id>.json`:
+
+- `claims.<claim_id>.thesis_ids`: links the claim to one or more thesis records
+- `theses.<thesis_id>`: stores title, direction, status, bull/bear cases, watchpoints, invalidation points, catalysts, related claims, and update history
+- `recent_thesis_ids`: keeps recent thesis context available to the next analyzer prompt
+
+This intentionally keeps thesis memory inside entity memory for the current stage. A separate thesis backend can be introduced later only if cross-entity thesis queries become a real bottleneck.
 
 ## Human vs Agent Ownership
 

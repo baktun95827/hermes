@@ -82,7 +82,7 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 - 来源评价记忆在 `memory/sources/`
 - 标准化 batch 产物是 `collector_batch_<run_id>.json`
 - 统一 schema 是 `collector-batch/v1` 和 `collector-item/v1`
-- 结构化记忆更新可以包含 `signal_evaluations`、各 claim 的 `signal_evaluation`、以及只供下游判断的 `alert_candidates`
+- 结构化记忆更新可以包含 `signal_evaluations`、各 claim 的 `signal_evaluation`、标的内嵌 `thesis_update`、以及只供下游判断的 `alert_candidates`
 
 ## 你改代码时最容易踩的坑
 
@@ -93,6 +93,7 @@ python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/conf
 - 不要让业务逻辑依赖“文件路径就是业务模型”；依赖 `MEMORY_UPDATE` 和 memory backend 边界
 - 不要把未经验证的社交媒体观点写成 `confirmed`
 - 不要把复读或噪音信号写进长期 memory；应使用 `signal_type: repeat|noise` 或 `memory_action: skip`
+- 不要把普通新闻都写成 thesis；只有信息改变 bull/bear case、关键验证点、证伪条件或催化时间表时才写 `thesis_update`
 - 不要把 analyzer 重新耦合回浏览器流程
 - 如果只是要接新 source，优先补 `collectors/<source>/source.yaml` 和标准化输出，不要先改摘要层
 

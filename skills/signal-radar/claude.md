@@ -281,7 +281,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `secondary_themes`：每个一级主题下的二级主题
 - `account_notes`：账号画像，key 使用不带 `@` 的用户名
 - `signal_evaluations`：run 级或事件簇级价值判断，可记录新事实、新角度、复读或噪音
-- `entity_updates`：股票、公司、行业链条等对象的 claim 记忆
+- `entity_updates`：股票、公司、行业链条等对象的 claim 记忆；如果信息改变投资假设，可内嵌 `thesis_update`
 - `event_updates`：持续事件的时间线记忆，例如伊朗、霍尔木兹海峡
 - `macro_updates`：宏观环境、流动性、能源和大宗商品趋势
 - `source_assessments`：agent 根据历史观察维护的来源评价
@@ -303,6 +303,17 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `alert_level`: `none`、`watch`、`important`、`urgent`
 
 `apply-memory` 会跳过 `signal_type: noise`、`novelty_level: none`、`memory_action: skip|reject` 或 `verification_status: rejected` 的结构化 claim。被接受的 claim 会在文件 backend 中保存 `cluster_id`、`signal_evaluation`、`last_valuable_at`、`status` 和可选 `decay_score`，这是后续 memory 衰减和污染控制的基础。
+
+`entity_updates.thesis_update` 是当前新增的 thesis memory 入口，用来把标的记忆从“claim 堆叠”推进到“投资假设维护”。它先不单独开 `memory/theses/`，而是写入对应 `memory/entities/<entity-id>.json` 的 `theses` 字段，并用 `claims.<claim_id>.thesis_ids` 关联原始 claim。建议字段包括：
+
+- `thesis_id` / `title`
+- `direction`: `bull`、`bear`、`neutral`、`mixed`
+- `thesis_status`: `active`、`watch`、`strengthened`、`weakened`、`invalidated`、`superseded`
+- `bull_case` / `bear_case`
+- `key_watchpoints`
+- `invalidation_points`
+- `catalysts`
+- `what_changed` / `thesis_impact`
 
 ### 5. 记忆结构、归一化与幂等
 
