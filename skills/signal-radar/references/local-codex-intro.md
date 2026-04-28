@@ -29,7 +29,9 @@ collect -> build-analysis-input -> analyzer -> apply-memory
 - `SKILL.md`
   部署态运行入口、标准流程、对 Hermes 的调用约定
 - `monitor.py`
-  当前 collector、analysis input builder 和 memory bridge 的核心实现
+  兼容 CLI 入口，保留 `collect` / `build-analysis-input` / `latest` / `apply-memory`
+- `signal_radar/`
+  具体实现模块：配置、schema、file memory backend、MEMORY_UPDATE 解析、X collector
 - `config.yaml`
   账号列表、cookies 路径、state、memory、输出目录
 - `references/architecture.md`
@@ -63,7 +65,7 @@ collect -> build-analysis-input -> analyzer -> apply-memory
 ```bash
 pip3 install --break-system-packages playwright pyyaml
 python3 -m playwright install chromium --with-deps
-python3 -m py_compile skills/signal-radar/monitor.py
+python3 -m py_compile skills/signal-radar/monitor.py skills/signal-radar/signal_radar/*.py
 python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/config.yaml
 python3 skills/signal-radar/monitor.py build-analysis-input --config skills/signal-radar/config.yaml
 ```
@@ -111,4 +113,4 @@ python3 skills/signal-radar/monitor.py build-analysis-input --config skills/sign
 
 ## 一句话总结
 
-Signal Radar 现在本质上是一个“X 先行、面向多来源演进”的 collector + analysis input + memory skill。你本地开发时，重点是保证 `monitor.py`、Playwright、标准化产物和 `analysis_input` 契约稳定，再逐步把 analyzer 从 X 专用输入迁到统一 schema。
+Signal Radar 现在本质上是一个“X 先行、面向多来源演进”的 collector + analysis input + memory skill。你本地开发时，重点是保证 `monitor.py` CLI 兼容、`signal_radar/` 模块边界、标准化产物和 `analysis_input` 契约稳定，再逐步把 analyzer 从 X 专用输入迁到统一 schema。

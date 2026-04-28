@@ -194,7 +194,8 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `reports/`
 - `latest_run.json`
 - `memory/`
-- `monitor.py` 里的原子写 helpers
+- `signal_radar/config.py` 里的原子写 helpers
+- `signal_radar/memory_store.py`
 - `StateManager`
 - `MemoryBackend`
 - `FileMemoryStore`
@@ -546,7 +547,7 @@ digest 应该从 manifest 做判断，而不是自己扫描目录、猜最新文
 现在还没有完成：
 
 - runtime 通过 registry 动态加载 source
-- X collector 从单一 `monitor.py` 入口彻底拆成多源 collector 框架的一部分
+- X collector 从 `signal_radar/x_collector.py` 继续演进成多源 collector 框架的一部分
 - Reddit / 雪球等新 source 的真实 collector 实现
 
 所以这一步的定位是：先把契约和骨架定下来，再逐步替换运行时。
@@ -558,6 +559,6 @@ digest 应该从 manifest 做判断，而不是自己扫描目录、猜最新文
 - 可以换 Playwright selector，而不改 analyzer 契约
 - 可以换模型，而不改 collector 契约
 - 可以换 Telegram 以外的通知渠道，而不改 memory 写入逻辑
-- 以后就算把 `monitor.py` 拆成多个脚本，也不需要推翻这套分层模型
+- `monitor.py` 只作为兼容 CLI 入口，具体实现可以继续在 `signal_radar/` 下按层演进
 
 这也是为什么现在就要把边界写清楚。

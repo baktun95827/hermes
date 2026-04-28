@@ -24,7 +24,8 @@ Do not use this skill for posting/replying/liking on X. That is a different work
 
 ## Files
 
-- `monitor.py`: collects tweets, builds analysis input artifacts, exposes the latest artifact manifest, and applies `MEMORY_UPDATE`
+- `monitor.py`: compatibility CLI entrypoint for collect/build-analysis-input/latest/apply-memory
+- `signal_radar/`: implementation modules for config, schemas, file memory backend, MEMORY_UPDATE parsing, and X collection
 - `config.yaml`: monitored accounts, memory backend, synced state path, topic hints, and alias normalization
 - `collectors/registry.yaml`: multi-source collector registry; contract-first for future sources like Reddit or 雪球
 - `collectors/x/source.yaml`: source definition template for the current X collector

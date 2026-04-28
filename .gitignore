@@ -31,3 +31,6 @@ skills/signal-radar/debug_*.png
 skills/signal-radar/__pycache__/
 channel_directory.json
 channel_directory.json
+
+
+__pycache__/

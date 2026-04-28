@@ -505,6 +505,12 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 ```
 ~/.hermes/skills/signal-radar/
 ├── monitor.py              # 主脚本
+├── signal_radar/           # 运行实现模块
+│   ├── config.py           # 配置、路径、原子写、latest manifest
+│   ├── schemas.py          # 常量、归一化、signal/claim/source schema helpers
+│   ├── memory_store.py     # StateManager、MemoryBackend、FileMemoryStore
+│   ├── memory_update.py    # MEMORY_UPDATE 解析和归一化
+│   └── x_collector.py      # X cookies、Playwright 抓取、collector batch
 ├── config.yaml             # 配置文件
 ├── cookies.json            # X 登录 cookies（敏感，不要提交到 git）
 ├── collectors/
@@ -675,7 +681,7 @@ X 的登录 cookies 通常在 1-2 周后过期。过期后 Playwright 打开页�
 
 当前的推文提取仍然依赖 X 的 DOM 结构，尤其是 `tweetText`、`tweetPhoto`、`videoPlayer` 等选择器。虽然实现已经补了 `div[lang]` 和 `a[href*="/status/"]` 的 fallback，但如果 X 做大范围前端改版，仍然可能失效。
 
-**应对方式：** 如果某天突然所有账号都抓取到 0 条推文但 cookies 没过期，大概率是选择器变了。检查 `debug_*.png` 截图确认页面状态，然后更新 `monitor.py` 中的选择器。
+**应对方式：** 如果某天突然所有账号都抓取到 0 条推文但 cookies 没过期，大概率是选择器变了。检查 `debug_*.png` 截图确认页面状态，然后更新 `signal_radar/x_collector.py` 中的选择器。
 
 ### 本地锁与多 VPS 冲突
 
