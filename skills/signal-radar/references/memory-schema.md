@@ -254,6 +254,9 @@ Example:
         "hit_rate": 0.3,
         "trust_score": 0.62,
         "valuable_count": 3,
+        "marketing_tendency": "low",
+        "emotion_tendency": "medium",
+        "primary_source_score": 0.3,
         "confirmation_required": "high",
         "bias_tags": ["产业链多头", "需公告验证"]
       }
@@ -337,8 +340,19 @@ Accepted `source_assessments.source_profile` updates are normalized into `memory
 - `repeat_tendency`: `low`, `medium`, `high`, `unknown`
 - `repeat_rate`, `hit_rate`, `trust_score`: floats from 0 to 1
 - `valuable_count`: non-negative count, incremented for valuable source updates when no explicit count is supplied
+- `marketing_tendency`, `emotion_tendency`: `low`, `medium`, `high`, `unknown`
+- `primary_source_score`: float from 0 to 1; use it as a soft score, not a boolean
 - `confirmation_required`: `none`, `low`, `medium`, `high`, `multi_source`, `official`, `unknown`
 - `bias_tags`: observed stance or behavior tags
+
+The system also maintains source observation fields from parsed analysis units:
+
+- `metrics`: deterministic counters such as `observed_count`, `valuable_count`, `high_novelty_count`, `repeat_count`, `noise_count`, `skipped_count`, `contradiction_count`, and `alert_count`
+- `rates`: derived from `metrics`, including `valuable_rate`, `high_novelty_rate`, `repeat_rate`, `noise_rate`, and `skipped_rate`
+- `topic_counts`: per-topic observed / valuable / high-novelty counters
+- `contribution_history`: bounded history of valuable, high-novelty, alert-worthy, or contradictory source contributions
+
+Analyzer output should not manually invent `metrics`, `rates`, `topic_counts`, or `contribution_history`. `apply-memory` updates those fields from `event_clusters`, `signal_evaluations`, accepted claim updates, and `contradictions`.
 
 `contradictions` are written to `memory/contradictions/<contradiction-id>.json` and indexed. They are deliberately observational:
 

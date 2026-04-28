@@ -355,7 +355,8 @@ analyzer 至少应该回答这些问题：
 - 哪些持续事件需要按时间线进入 `event_updates`
 - 哪些宏观背景或趋势需要进入 `macro_updates`
 - 哪些来源可信度或确认要求需要更新到 `source_assessments`
-- 来源画像是否需要更新 `source_type`、`topic_scores`、`trust_score`、`repeat_rate`、`valuable_count` 或 `confirmation_required`
+- 来源画像是否需要更新 `source_type`、`topic_scores`、`trust_score`、`repeat_rate`、`valuable_count`、`marketing_tendency`、`emotion_tendency`、`primary_source_score` 或 `confirmation_required`
+- 来源画像的 `metrics`、`rates`、`topic_counts` 和 `contribution_history` 由 `apply-memory` 从 event clusters / claim updates 自动累积，不由 analyzer 手工编造
 - 哪些内容只是 `alert_candidates`，需要交给 digest / alerts 再决定是否发送
 - 哪些内容存在疑似冲突，应进入 `contradictions` 观察但不自动裁决真假
 - 哪些内容值得进入最终 digest

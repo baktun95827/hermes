@@ -364,8 +364,12 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 - `repeat_tendency` / `repeat_rate`
 - `hit_rate` / `trust_score`
 - `valuable_count` / `last_valuable_at`
+- `marketing_tendency` / `emotion_tendency`
+- `primary_source_score`
 - `confirmation_required`
 - `bias_tags`
+
+`apply-memory` 会从 `event_clusters`、`signal_evaluations`、被接受的 claim update 和 `contradictions` 自动维护来源的 `metrics`、`rates`、`topic_counts` 与 `contribution_history`。这些字段是系统统计，不应该由 analyzer 在 `MEMORY_UPDATE` 里手工编造。Analyzer 只需要补充 `source_profile` 里的定性画像，例如来源类型、擅长主题、营销/情绪倾向、是否接近一手源、确认要求和偏见标签。
 
 ### 5. 记忆结构、归一化与幂等
 

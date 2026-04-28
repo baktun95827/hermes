@@ -251,6 +251,9 @@ Expected `MEMORY_UPDATE` shape:
         "hit_rate": 0.3,
         "trust_score": 0.62,
         "valuable_count": 3,
+        "marketing_tendency": "low",
+        "emotion_tendency": "medium",
+        "primary_source_score": 0.3,
         "confirmation_required": "high",
         "bias_tags": ["产业链多头", "需公告验证"]
       }
@@ -308,7 +311,8 @@ Behavior notes:
 - structured updates with `verification_status: rejected`, explicit skip actions, `signal_type: noise`, `memory_action: skip|reject`, or no novelty are ignored
 - accepted claim updates store `cluster_id`, `signal_evaluation`, `what_changed`, `changed_since`, `prior_claim_refs`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend
 - accepted `entity_updates.thesis_update` entries are merged into the entity file's `theses` map; this keeps bull/bear cases, watchpoints, invalidation points, catalysts, and thesis status next to the related claims
-- accepted `source_assessments.source_profile` entries update structured source memory: `source_type`, `topic_scores`, `repeat_tendency`, `repeat_rate`, `hit_rate`, `trust_score`, `valuable_count`, `confirmation_required`, and `bias_tags`
+- accepted `source_assessments.source_profile` entries update structured source memory: `source_type`, `topic_scores`, `repeat_tendency`, `repeat_rate`, `hit_rate`, `trust_score`, `valuable_count`, `marketing_tendency`, `emotion_tendency`, `primary_source_score`, `confirmation_required`, and `bias_tags`
+- event clusters, signal evaluations, accepted claim updates, and contradictions automatically update source `metrics`, `rates`, `topic_counts`, and `contribution_history`; do not ask the analyzer to manually invent those counters
 - `alert_candidates` are recorded in `memory_update_*.json`; sending them is a downstream digest/alert decision
 - `contradictions` are recorded under `memory/contradictions/` and indexed, but they do not automatically rewrite related entity, event, or macro memory conclusions
 - `latest --field memory_backend` returns the active memory backend; currently this should be `file`

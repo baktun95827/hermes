@@ -127,6 +127,20 @@ CONFIRMATION_REQUIRED_LEVELS = {
     "unknown",
 }
 REPEAT_TENDENCIES = {"low", "medium", "high", "unknown"}
+STYLE_TENDENCIES = {"low", "medium", "high", "unknown"}
+SOURCE_METRIC_KEYS = {
+    "assessment_count",
+    "observed_count",
+    "valuable_count",
+    "high_novelty_count",
+    "repeat_count",
+    "noise_count",
+    "skipped_count",
+    "contradiction_count",
+    "alert_count",
+}
+SOURCE_CONTRIBUTION_HISTORY_LIMIT = 50
+SOURCE_OBSERVATION_ID_LIMIT = 200
 SKIP_MEMORY_ACTIONS = {"ignore", "ignored", "reject", "rejected", "skip", "no_op", "noop"}
 SKIP_NOVELTY_VALUES = {"duplicate", "duplicated", "none", "low_value", "no_value"}
 SKIP_SIGNAL_TYPES = {"noise"}
@@ -363,6 +377,24 @@ def normalize_repeat_tendency(value: Any) -> str:
     return tendency if tendency in REPEAT_TENDENCIES else "unknown"
 
 
+def normalize_style_tendency(value: Any) -> str:
+    tendency = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "no": "low",
+        "false": "low",
+        "rare": "low",
+        "little": "low",
+        "normal": "medium",
+        "some": "medium",
+        "yes": "high",
+        "true": "high",
+        "often": "high",
+        "frequent": "high",
+    }
+    tendency = aliases.get(tendency, tendency)
+    return tendency if tendency in STYLE_TENDENCIES else "unknown"
+
+
 def coerce_float_or_none(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -435,6 +467,90 @@ def is_valuable_signal(signal_evaluation: dict[str, Any]) -> bool:
         and signal_evaluation.get("signal_type") not in SKIP_SIGNAL_TYPES
         and signal_evaluation.get("novelty_level") in {"high", "medium"}
     )
+
+
+def is_high_novelty_signal(signal_evaluation: dict[str, Any]) -> bool:
+    return signal_evaluation.get("novelty_level") == "high"
+
+
+def normalize_source_metrics(
+    value: Any,
+    seed_valuable_count: Any = None,
+) -> dict[str, int]:
+    raw = value if isinstance(value, dict) else {}
+    metrics: dict[str, int] = {}
+    for key in sorted(SOURCE_METRIC_KEYS):
+        metrics[key] = coerce_non_negative_int(raw.get(key)) or 0
+
+    seed_count = coerce_non_negative_int(seed_valuable_count)
+    if seed_count is not None:
+        metrics["valuable_count"] = max(metrics["valuable_count"], seed_count)
+    return metrics
+
+
+def calculate_source_rates(metrics: dict[str, int]) -> dict[str, float]:
+    observed_count = max(0, coerce_non_negative_int(metrics.get("observed_count")) or 0)
+    if observed_count == 0:
+        return {
+            "valuable_rate": 0.0,
+            "high_novelty_rate": 0.0,
+            "repeat_rate": 0.0,
+            "noise_rate": 0.0,
+            "skipped_rate": 0.0,
+        }
+
+    def rate(key: str) -> float:
+        return round((coerce_non_negative_int(metrics.get(key)) or 0) / observed_count, 4)
+
+    return {
+        "valuable_rate": rate("valuable_count"),
+        "high_novelty_rate": rate("high_novelty_count"),
+        "repeat_rate": rate("repeat_count"),
+        "noise_rate": rate("noise_count"),
+        "skipped_rate": rate("skipped_count"),
+    }
+
+
+def source_topic_from_update(update: dict[str, Any]) -> str:
+    for key in ("theme", "topic", "primary_theme", "sector", "industry"):
+        topic = clean_text(update.get(key))
+        if topic:
+            return topic
+    related_entities = coerce_string_list(update.get("related_entity_ids"))
+    if related_entities:
+        return related_entities[0]
+    entity_id = clean_text(update.get("entity_id") or update.get("symbol"))
+    if entity_id:
+        return entity_id
+    event_id = clean_text(update.get("event_id") or update.get("title"))
+    if event_id:
+        return event_id
+    macro_id = clean_text(update.get("macro_id"))
+    return macro_id
+
+
+def stable_source_observation_id(
+    update_id: str,
+    observation_kind: str,
+    source_id: str,
+    update: dict[str, Any],
+) -> str:
+    identity = {
+        "update_id": update_id,
+        "observation_kind": observation_kind,
+        "source_id": source_id,
+        "cluster_id": clean_text(update.get("cluster_id")),
+        "claim_id": clean_text(update.get("claim_id") or update.get("id")),
+        "title": clean_text(update.get("title")),
+        "claim": clean_text(
+            update.get("claim") or update.get("summary") or update.get("observation")
+        ),
+        "evidence_item_ids": coerce_string_list(update.get("evidence_item_ids")),
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"{update_id}:source-observation:{digest[:16]}"
 
 
 def should_skip_structured_memory_update(update: dict[str, Any]) -> bool:
@@ -1126,6 +1242,15 @@ class MemoryBackend(Protocol):
     ) -> bool:
         ...
 
+    def update_source_observation(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+        observation_kind: str,
+    ) -> int:
+        ...
+
     def update_contradiction_memory(
         self,
         update: dict[str, Any],
@@ -1258,6 +1383,40 @@ class FileMemoryStore:
 
     def contradiction_path(self, contradiction_id: str) -> Path:
         return self.contradictions_dir / f"{safe_filename(contradiction_id)}.json"
+
+    def default_source_payload(
+        self,
+        source_id: str,
+        seen_at: str,
+        update: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        update = update or {}
+        source_type = normalize_source_type(update.get("source_type"))
+        return {
+            "schema_version": "source-memory/v1",
+            "source_id": source_id,
+            "source_type": source_type,
+            "display_name": clean_text(update.get("display_name")) or source_id,
+            "created_at": seen_at,
+            "updated_at": seen_at,
+            "latest_assessment": "",
+            "assessment_history": [],
+            "topic_strength": {},
+            "topic_scores": {},
+            "topic_counts": {},
+            "metrics": normalize_source_metrics({}),
+            "rates": calculate_source_rates(normalize_source_metrics({})),
+            "style_profile": {
+                "marketing_tendency": "unknown",
+                "emotion_tendency": "unknown",
+                "primary_source_score": None,
+            },
+            "source_profile": {},
+            "contribution_history": [],
+            "applied_update_ids": [],
+            "applied_observation_ids": [],
+            "last_update_id": None,
+        }
 
     def migrate_legacy_state(self, state: StateManager) -> bool:
         changed = False
@@ -1884,21 +2043,7 @@ class FileMemoryStore:
         path = self.source_path(source_id)
         payload = self._read_json(
             path,
-            {
-                "schema_version": "source-memory/v1",
-                "source_id": source_id,
-                "source_type": clean_text(update.get("source_type")) or "unknown",
-                "display_name": clean_text(update.get("display_name")) or source_id,
-                "created_at": seen_at,
-                "updated_at": seen_at,
-                "latest_assessment": "",
-                "assessment_history": [],
-                "topic_strength": {},
-                "topic_scores": {},
-                "source_profile": {},
-                "applied_update_ids": [],
-                "last_update_id": None,
-            },
+            self.default_source_payload(source_id, seen_at, update),
         )
         applied_update_ids = payload.get("applied_update_ids", [])
         if not isinstance(applied_update_ids, list):
@@ -1946,17 +2091,32 @@ class FileMemoryStore:
             if profile_field("repeat_rate") is not None
             else payload.get("repeat_rate")
         )
-        previous_valuable_count = coerce_non_negative_int(
-            payload.get("valuable_count")
-        ) or 0
+        metrics = normalize_source_metrics(
+            payload.get("metrics"),
+            seed_valuable_count=payload.get("valuable_count"),
+        )
+        metrics["assessment_count"] += 1
+        previous_valuable_count = metrics["valuable_count"]
         explicit_valuable_count = coerce_non_negative_int(
             profile_field("valuable_count")
         )
         valuable_count = (
-            explicit_valuable_count
+            max(previous_valuable_count, explicit_valuable_count)
             if explicit_valuable_count is not None
             else previous_valuable_count + (1 if is_valuable_signal(signal_evaluation) else 0)
         )
+        metrics["valuable_count"] = valuable_count
+        if is_high_novelty_signal(signal_evaluation):
+            metrics["high_novelty_count"] += 1
+        if signal_evaluation["signal_type"] == "repeat":
+            metrics["repeat_count"] += 1
+        if signal_evaluation["signal_type"] == "noise":
+            metrics["noise_count"] += 1
+        if signal_evaluation["memory_action"] in {"skip", "reject"}:
+            metrics["skipped_count"] += 1
+        if signal_evaluation["alert_level"] in {"watch", "important", "urgent"}:
+            metrics["alert_count"] += 1
+        rates = calculate_source_rates(metrics)
         history = payload.get("assessment_history", [])
         if not isinstance(history, list):
             history = []
@@ -1992,6 +2152,28 @@ class FileMemoryStore:
         if not last_valuable_at and is_valuable_signal(signal_evaluation):
             last_valuable_at = seen_at
 
+        existing_style_profile = payload.get("style_profile")
+        if not isinstance(existing_style_profile, dict):
+            existing_style_profile = {}
+        marketing_tendency = normalize_style_tendency(
+            profile_field("marketing_tendency")
+            or existing_style_profile.get("marketing_tendency")
+        )
+        emotion_tendency = normalize_style_tendency(
+            profile_field("emotion_tendency")
+            or existing_style_profile.get("emotion_tendency")
+        )
+        primary_source_score = (
+            coerce_float_or_none(profile_field("primary_source_score"))
+            if profile_field("primary_source_score") is not None
+            else existing_style_profile.get("primary_source_score")
+        )
+        style_profile_payload = {
+            "marketing_tendency": marketing_tendency,
+            "emotion_tendency": emotion_tendency,
+            "primary_source_score": primary_source_score,
+        }
+
         bias_tags = unique_preserving_order(
             coerce_string_list(payload.get("bias_tags"))
             + coerce_string_list(profile_field("bias_tags") or update.get("bias_tags"))
@@ -2007,6 +2189,10 @@ class FileMemoryStore:
             "last_valuable_at": last_valuable_at or payload.get("last_valuable_at"),
             "confirmation_required": normalized_confirmation_required,
             "bias_tags": bias_tags,
+            "marketing_tendency": marketing_tendency,
+            "emotion_tendency": emotion_tendency,
+            "primary_source_score": primary_source_score,
+            "style_profile": style_profile_payload,
         }
 
         payload.update(
@@ -2033,9 +2219,12 @@ class FileMemoryStore:
                 "repeat_rate": repeat_rate,
                 "trust_score": trust_score,
                 "valuable_count": valuable_count,
+                "metrics": metrics,
+                "rates": rates,
                 "topic_strength": topic_scores,
                 "topic_scores": topic_scores,
                 "bias_tags": bias_tags,
+                "style_profile": style_profile_payload,
                 "source_profile": source_profile_payload,
                 "latest_signal_evaluation": signal_evaluation,
                 "assessment_history": history[-20:],
@@ -2045,6 +2234,173 @@ class FileMemoryStore:
         )
         self._write_json(path, payload)
         return True
+
+    def update_source_observation(
+        self,
+        update: dict[str, Any],
+        seen_at: str,
+        update_id: str,
+        observation_kind: str,
+    ) -> int:
+        source_ids = coerce_string_list(update.get("source_ids"))
+        if not source_ids:
+            source_id = clean_text(
+                update.get("source_id")
+                or update.get("canonical_source_id")
+                or update.get("username")
+            )
+            if source_id:
+                source_ids = [source_id]
+        if not source_ids:
+            return 0
+
+        updated_count = 0
+        signal_evaluation = build_signal_evaluation(update)
+        topic = source_topic_from_update(update)
+        cluster_id = clean_text(update.get("cluster_id"))
+        claim_id = clean_text(update.get("claim_id") or update.get("id"))
+        evidence_item_ids = coerce_string_list(update.get("evidence_item_ids"))
+        related_entity_ids = coerce_string_list(update.get("related_entity_ids"))
+        related_event_ids = coerce_string_list(update.get("related_event_ids"))
+        related_macro_ids = coerce_string_list(update.get("related_macro_ids"))
+        should_record_contribution = (
+            is_valuable_signal(signal_evaluation)
+            or is_high_novelty_signal(signal_evaluation)
+            or observation_kind == "contradiction"
+            or signal_evaluation["alert_level"] in {"watch", "important", "urgent"}
+        )
+
+        for raw_source_id in source_ids:
+            source_id = clean_text(raw_source_id)
+            if not source_id:
+                continue
+
+            observation_id = stable_source_observation_id(
+                update_id=update_id,
+                observation_kind=observation_kind,
+                source_id=source_id,
+                update=update,
+            )
+            path = self.source_path(source_id)
+            payload = self._read_json(
+                path,
+                self.default_source_payload(source_id, seen_at, update),
+            )
+            applied_observation_ids = payload.get("applied_observation_ids", [])
+            if not isinstance(applied_observation_ids, list):
+                applied_observation_ids = []
+            if observation_id in applied_observation_ids:
+                continue
+
+            metrics = normalize_source_metrics(
+                payload.get("metrics"),
+                seed_valuable_count=payload.get("valuable_count"),
+            )
+            metrics["observed_count"] += 1
+            if is_valuable_signal(signal_evaluation):
+                metrics["valuable_count"] += 1
+            if is_high_novelty_signal(signal_evaluation):
+                metrics["high_novelty_count"] += 1
+            if signal_evaluation["signal_type"] == "repeat":
+                metrics["repeat_count"] += 1
+            if (
+                signal_evaluation["signal_type"] == "noise"
+                or signal_evaluation["memory_action"] == "reject"
+            ):
+                metrics["noise_count"] += 1
+            if (
+                signal_evaluation["memory_action"] in {"skip", "reject"}
+                or signal_evaluation["novelty_level"] == "none"
+            ):
+                metrics["skipped_count"] += 1
+            if observation_kind == "contradiction":
+                metrics["contradiction_count"] += 1
+            if signal_evaluation["alert_level"] in {"watch", "important", "urgent"}:
+                metrics["alert_count"] += 1
+            rates = calculate_source_rates(metrics)
+
+            topic_counts = payload.get("topic_counts", {})
+            if not isinstance(topic_counts, dict):
+                topic_counts = {}
+            if topic:
+                topic_entry = topic_counts.get(topic, {})
+                if not isinstance(topic_entry, dict):
+                    topic_entry = {}
+                topic_entry = {
+                    "observed_count": (
+                        coerce_non_negative_int(topic_entry.get("observed_count"))
+                        or 0
+                    )
+                    + 1,
+                    "valuable_count": (
+                        coerce_non_negative_int(topic_entry.get("valuable_count"))
+                        or 0
+                    )
+                    + (1 if is_valuable_signal(signal_evaluation) else 0),
+                    "high_novelty_count": (
+                        coerce_non_negative_int(
+                            topic_entry.get("high_novelty_count")
+                        )
+                        or 0
+                    )
+                    + (1 if is_high_novelty_signal(signal_evaluation) else 0),
+                    "last_seen": seen_at,
+                }
+                topic_counts[topic] = topic_entry
+
+            contribution_history = payload.get("contribution_history", [])
+            if not isinstance(contribution_history, list):
+                contribution_history = []
+            if should_record_contribution:
+                contribution_history.append(
+                    {
+                        "time": seen_at,
+                        "observation_id": observation_id,
+                        "observation_kind": observation_kind,
+                        "cluster_id": cluster_id,
+                        "claim_id": claim_id,
+                        "topic": topic,
+                        "novelty_level": signal_evaluation["novelty_level"],
+                        "signal_type": signal_evaluation["signal_type"],
+                        "memory_action": signal_evaluation["memory_action"],
+                        "alert_level": signal_evaluation["alert_level"],
+                        "evidence_item_ids": evidence_item_ids,
+                        "related_entity_ids": related_entity_ids,
+                        "related_event_ids": related_event_ids,
+                        "related_macro_ids": related_macro_ids,
+                    }
+                )
+
+            payload.update(
+                {
+                    "schema_version": "source-memory/v1",
+                    "source_id": source_id,
+                    "display_name": payload.get("display_name") or source_id,
+                    "updated_at": seen_at,
+                    "last_valuable_at": (
+                        seen_at
+                        if is_valuable_signal(signal_evaluation)
+                        else payload.get("last_valuable_at")
+                    ),
+                    "metrics": metrics,
+                    "rates": rates,
+                    "valuable_count": metrics["valuable_count"],
+                    "repeat_rate": rates["repeat_rate"],
+                    "topic_counts": topic_counts,
+                    "latest_signal_evaluation": signal_evaluation,
+                    "contribution_history": contribution_history[
+                        -SOURCE_CONTRIBUTION_HISTORY_LIMIT:
+                    ],
+                    "applied_observation_ids": (
+                        applied_observation_ids + [observation_id]
+                    )[-SOURCE_OBSERVATION_ID_LIMIT:],
+                    "last_update_id": update_id,
+                }
+            )
+            self._write_json(path, payload)
+            updated_count += 1
+
+        return updated_count
 
     def update_contradiction_memory(
         self,
@@ -2351,14 +2707,70 @@ class FileMemoryStore:
             )
             if not isinstance(topic_scores, dict):
                 topic_scores = {}
-            top_topics = sorted(
-                (
-                    (clean_text(topic), coerce_float_or_none(score))
-                    for topic, score in topic_scores.items()
+            topic_counts = payload.get("topic_counts", {})
+            if not isinstance(topic_counts, dict):
+                topic_counts = {}
+            top_topic_payloads: list[dict[str, Any]] = []
+            for topic, raw_entry in topic_counts.items():
+                topic_name = clean_text(topic)
+                if not topic_name or not isinstance(raw_entry, dict):
+                    continue
+                top_topic_payloads.append(
+                    {
+                        "topic": topic_name,
+                        "score": coerce_float_or_none(topic_scores.get(topic_name)),
+                        "observed_count": coerce_non_negative_int(
+                            raw_entry.get("observed_count")
+                        )
+                        or 0,
+                        "valuable_count": coerce_non_negative_int(
+                            raw_entry.get("valuable_count")
+                        )
+                        or 0,
+                        "high_novelty_count": coerce_non_negative_int(
+                            raw_entry.get("high_novelty_count")
+                        )
+                        or 0,
+                        "last_seen": clean_text(raw_entry.get("last_seen")),
+                    }
+                )
+            scored_topic_names = {item["topic"] for item in top_topic_payloads}
+            for topic, score in topic_scores.items():
+                topic_name = clean_text(topic)
+                normalized_score = coerce_float_or_none(score)
+                if not topic_name or topic_name in scored_topic_names:
+                    continue
+                top_topic_payloads.append(
+                    {
+                        "topic": topic_name,
+                        "score": normalized_score,
+                        "observed_count": 0,
+                        "valuable_count": 0,
+                        "high_novelty_count": 0,
+                        "last_seen": "",
+                    }
+                )
+            top_topic_payloads.sort(
+                key=lambda item: (
+                    item.get("valuable_count") or 0,
+                    item.get("high_novelty_count") or 0,
+                    item.get("observed_count") or 0,
+                    item.get("score") if item.get("score") is not None else -1,
                 ),
-                key=lambda item: item[1] if item[1] is not None else -1,
                 reverse=True,
             )
+            metrics = normalize_source_metrics(
+                payload.get("metrics"),
+                seed_valuable_count=payload.get("valuable_count"),
+            )
+            rates = (
+                payload.get("rates")
+                if isinstance(payload.get("rates"), dict)
+                else calculate_source_rates(metrics)
+            )
+            style_profile = payload.get("style_profile")
+            if not isinstance(style_profile, dict):
+                style_profile = {}
             memories.append(
                 {
                     "source_id": source_id,
@@ -2371,12 +2783,21 @@ class FileMemoryStore:
                     ),
                     "repeat_tendency": clean_text(payload.get("repeat_tendency")),
                     "trust_score": payload.get("trust_score"),
-                    "valuable_count": payload.get("valuable_count"),
-                    "top_topics": [
-                        {"topic": topic, "score": score}
-                        for topic, score in top_topics[:5]
-                        if topic and score is not None
-                    ],
+                    "valuable_count": metrics["valuable_count"],
+                    "metrics": metrics,
+                    "rates": rates,
+                    "style_profile": {
+                        "marketing_tendency": normalize_style_tendency(
+                            style_profile.get("marketing_tendency")
+                        ),
+                        "emotion_tendency": normalize_style_tendency(
+                            style_profile.get("emotion_tendency")
+                        ),
+                        "primary_source_score": coerce_float_or_none(
+                            style_profile.get("primary_source_score")
+                        ),
+                    },
+                    "top_topics": top_topic_payloads[:5],
                     "latest_assessment": clean_text(
                         payload.get("latest_assessment")
                     ),
@@ -2479,6 +2900,18 @@ class FileMemoryStore:
             source_id = clean_text(payload.get("source_id"))
             if not source_id:
                 continue
+            metrics = normalize_source_metrics(
+                payload.get("metrics"),
+                seed_valuable_count=payload.get("valuable_count"),
+            )
+            rates = (
+                payload.get("rates")
+                if isinstance(payload.get("rates"), dict)
+                else calculate_source_rates(metrics)
+            )
+            style_profile = payload.get("style_profile")
+            if not isinstance(style_profile, dict):
+                style_profile = {}
             sources[source_id] = {
                 "file": str(path.relative_to(self.root)),
                 "updated_at": payload.get("updated_at"),
@@ -2489,9 +2922,23 @@ class FileMemoryStore:
                 "confirmation_required": payload.get("confirmation_required"),
                 "repeat_tendency": payload.get("repeat_tendency"),
                 "trust_score": payload.get("trust_score"),
-                "valuable_count": payload.get("valuable_count", 0),
+                "valuable_count": metrics["valuable_count"],
+                "metrics": metrics,
+                "rates": rates,
+                "style_profile": {
+                    "marketing_tendency": normalize_style_tendency(
+                        style_profile.get("marketing_tendency")
+                    ),
+                    "emotion_tendency": normalize_style_tendency(
+                        style_profile.get("emotion_tendency")
+                    ),
+                    "primary_source_score": coerce_float_or_none(
+                        style_profile.get("primary_source_score")
+                    ),
+                },
                 "topic_scores": payload.get("topic_scores")
                 or payload.get("topic_strength", {}),
+                "topic_counts": payload.get("topic_counts", {}),
             }
 
         contradictions: dict[str, Any] = {}
@@ -3284,17 +3731,47 @@ def format_history_context(memory_context: dict[str, Any]) -> str:
                     continue
                 topic_name = clean_text(topic.get("topic"))
                 score = topic.get("score")
-                if topic_name and score is not None:
-                    topic_parts.append(f"{topic_name}:{score}")
+                observed_count = topic.get("observed_count") or 0
+                valuable_count = topic.get("valuable_count") or 0
+                if topic_name:
+                    if score is not None:
+                        topic_parts.append(
+                            f"{topic_name}:{score},obs={observed_count},val={valuable_count}"
+                        )
+                    else:
+                        topic_parts.append(
+                            f"{topic_name}:obs={observed_count},val={valuable_count}"
+                        )
             topic_text = ", ".join(topic_parts) if topic_parts else "（暂无主题评分）"
             trust_score = item.get("trust_score")
             trust_text = f"{trust_score}" if trust_score is not None else "unknown"
+            metrics = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+            rates = item.get("rates") if isinstance(item.get("rates"), dict) else {}
+            style_profile = (
+                item.get("style_profile")
+                if isinstance(item.get("style_profile"), dict)
+                else {}
+            )
+            primary_source_score = style_profile.get("primary_source_score")
+            primary_text = (
+                f"{primary_source_score}"
+                if primary_source_score is not None
+                else "unknown"
+            )
             history_context += (
                 f"  - {item['display_name'] or item['source_id']}"
                 f" [{item.get('source_type') or 'unknown'}]: "
                 f"trust={trust_text}, repeat={item.get('repeat_tendency') or 'unknown'}, "
                 f"confirm={item.get('confirmation_required') or 'unknown'}, "
-                f"valuable_count={item.get('valuable_count') or 0}, topics={topic_text}\n"
+                f"primary_score={primary_text}, "
+                f"observed={metrics.get('observed_count', 0)}, "
+                f"valuable={metrics.get('valuable_count', 0)}, "
+                f"valuable_rate={rates.get('valuable_rate', 0)}, "
+                f"repeat_rate={rates.get('repeat_rate', 0)}, "
+                f"noise_rate={rates.get('noise_rate', 0)}, "
+                f"marketing={style_profile.get('marketing_tendency') or 'unknown'}, "
+                f"emotion={style_profile.get('emotion_tendency') or 'unknown'}, "
+                f"topics={topic_text}\n"
             )
             if item.get("latest_assessment"):
                 history_context += f"    assessment: {item['latest_assessment']}\n"
@@ -3546,6 +4023,9 @@ def build_llm_prompt(
         "hit_rate": 0.3,
         "trust_score": 0.62,
         "valuable_count": 3,
+        "marketing_tendency": "low",
+        "emotion_tendency": "medium",
+        "primary_source_score": 0.3,
         "confirmation_required": "high",
         "bias_tags": ["产业链多头", "需公告验证"]
       }
@@ -3631,9 +4111,10 @@ def build_llm_prompt(
 24. `thesis_update.thesis_status` 用 `active`、`watch`、`strengthened`、`weakened`、`invalidated`、`superseded`；`direction` 用 `bull`、`bear`、`neutral`、`mixed`
 25. `event_updates` 用于会随时间发展的事件，按时间线追加
 26. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
-27. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度；`source_profile` 优先使用 `source_type`、`topic_scores`、`repeat_tendency`、`repeat_rate`、`hit_rate`、`trust_score`、`valuable_count`、`confirmation_required`、`bias_tags`
+27. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度；`source_profile` 优先使用 `source_type`、`topic_scores`、`repeat_tendency`、`repeat_rate`、`hit_rate`、`trust_score`、`valuable_count`、`marketing_tendency`、`emotion_tendency`、`primary_source_score`、`confirmation_required`、`bias_tags`
 28. `source_type` 用 `primary`、`official`、`analyst`、`aggregator`、`trader`、`media`、`commentary`、`noise`；不确定用 `unknown`
-29. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
+29. 来源画像里的 `metrics`、`rates`、`topic_counts`、`contribution_history` 由系统从 event clusters 和 claim updates 自动维护，不要在 MEMORY_UPDATE 里手工编造
+30. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
 {theme_hint}
 ## 历史上下文
 {history_context if history_context else "（首次运行，无历史数据）"}
@@ -4649,6 +5130,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
     event_updates = 0
     macro_updates = 0
     source_updates = 0
+    source_observation_updates = 0
     contradiction_updates = 0
     with memory_store.lock():
         memory_store.migrate_legacy_state(state)
@@ -4712,7 +5194,51 @@ def apply_memory(config_path: str, summary_file: str) -> int:
             ):
                 source_updates += 1
 
+        observed_cluster_ids: set[str] = set()
+        for update in parsed["event_clusters"]:
+            cluster_id = clean_text(update.get("cluster_id"))
+            if cluster_id and coerce_string_list(update.get("source_ids")):
+                observed_cluster_ids.add(cluster_id)
+            updated_sources = memory_store.update_source_observation(
+                update=update,
+                seen_at=seen_at,
+                update_id=update_id,
+                observation_kind="event_cluster",
+            )
+            source_observation_updates += updated_sources
+
+        for update in parsed["signal_evaluations"]:
+            if clean_text(update.get("cluster_id")) in observed_cluster_ids:
+                continue
+            source_observation_updates += memory_store.update_source_observation(
+                update=update,
+                seen_at=seen_at,
+                update_id=update_id,
+                observation_kind="signal_evaluation",
+            )
+
+        for collection_name, updates in (
+            ("entity_update", parsed["entity_updates"]),
+            ("event_update", parsed["event_updates"]),
+            ("macro_update", parsed["macro_updates"]),
+        ):
+            for update in updates:
+                if clean_text(update.get("cluster_id")) in observed_cluster_ids:
+                    continue
+                source_observation_updates += memory_store.update_source_observation(
+                    update=update,
+                    seen_at=seen_at,
+                    update_id=update_id,
+                    observation_kind=collection_name,
+                )
+
         for update in parsed["contradictions"]:
+            source_observation_updates += memory_store.update_source_observation(
+                update=update,
+                seen_at=seen_at,
+                update_id=update_id,
+                observation_kind="contradiction",
+            )
             if memory_store.update_contradiction_memory(
                 update=update,
                 seen_at=seen_at,
@@ -4727,6 +5253,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
             or event_updates
             or macro_updates
             or source_updates
+            or source_observation_updates
             or contradiction_updates
             or not memory_store.index_path.exists()
         ):
@@ -4753,6 +5280,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         + event_updates
         + macro_updates
         + source_updates
+        + source_observation_updates
         + contradiction_updates
     )
 
@@ -4784,6 +5312,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "event_updates_applied": event_updates,
         "macro_updates_applied": macro_updates,
         "source_updates_applied": source_updates,
+        "source_observation_updates_applied": source_observation_updates,
         "contradiction_updates_applied": contradiction_updates,
         "already_applied": (
             theme_updates == 0
@@ -4792,6 +5321,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
             and event_updates == 0
             and macro_updates == 0
             and source_updates == 0
+            and source_observation_updates == 0
             and contradiction_updates == 0
         ),
     }
@@ -4832,6 +5362,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "event_updates": event_updates,
         "macro_updates": macro_updates,
         "source_updates": source_updates,
+        "source_observation_updates": source_observation_updates,
         "contradiction_updates": contradiction_updates,
         "already_applied": payload["already_applied"],
     }
