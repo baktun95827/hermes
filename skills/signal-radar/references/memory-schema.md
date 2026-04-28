@@ -308,7 +308,23 @@ When using `memory_backend: file`, committed long-run memory lives under `memory
 - `memory/macro/`: one file per macro trend
 - `memory/sources/`: agent-maintained notes about accounts and sources
 - `memory/contradictions/`: one file per suspected contradiction
+- `memory/audit/`: one audit record per memory update id
 - `memory/index.json`: rebuilt index of all memory files
+
+## Memory Audit
+
+`apply-memory` writes or reuses `memory/audit/<update-id>.json` for every parsed memory update. This is the file-backend version of a future `memory_updates` table.
+
+Each audit record includes:
+
+- update status: `auto_applied` or `already_applied`
+- linked artifacts: summary, memory update JSON, run metrics, analysis input, prompt, collector batch, and raw data when available
+- input evidence ids and event cluster ids
+- update counts by memory type
+- changed memory files, before/after hashes, before/after content snapshots, and unified diffs
+- `user_feedback`, currently null and reserved for later correction workflows
+
+The audit directory is excluded from memory diff snapshots, and rerunning the same summary does not overwrite the first audit record for that `update_id`.
 
 ## Write Rules
 

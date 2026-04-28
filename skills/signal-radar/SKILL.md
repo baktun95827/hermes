@@ -300,6 +300,7 @@ python3 ~/.hermes/skills/signal-radar/monitor.py apply-memory --config ~/.hermes
 - `memory/macro/<macro-id>.json`
 - `memory/sources/<source-id>.json`
 - `memory/contradictions/<contradiction-id>.json`
+- `memory/audit/<update-id>.json`
 - a structured `memory_update_*.json`
 - updated `run_metrics_*.json`
 - refreshed `latest_run.json`
@@ -314,9 +315,11 @@ Behavior notes:
 - accepted `entity_updates.thesis_update` entries are merged into the entity file's `theses` map; this keeps bull/bear cases, watchpoints, invalidation points, catalysts, and thesis status next to the related claims
 - accepted `source_assessments.source_profile` entries update structured source memory: `source_type`, `topic_scores`, `repeat_tendency`, `repeat_rate`, `hit_rate`, `trust_score`, `valuable_count`, `marketing_tendency`, `emotion_tendency`, `primary_source_score`, `confirmation_required`, and `bias_tags`
 - event clusters, signal evaluations, accepted claim updates, and contradictions automatically update source `metrics`, `rates`, `topic_counts`, and `contribution_history`; do not ask the analyzer to manually invent those counters
+- every `apply-memory` writes or reuses a file-backed audit record in `memory/audit/`; the audit links summary/prompt/input artifacts, input item ids, event cluster ids, update counts, changed memory files, before/after hashes, and unified diffs
 - `alert_candidates` are recorded in `memory_update_*.json`; sending them is a downstream digest/alert decision
 - `contradictions` are recorded under `memory/contradictions/` and indexed, but they do not automatically rewrite related entity, event, or macro memory conclusions
 - `latest --field memory_backend` returns the active memory backend; currently this should be `file`
+- `latest --field memory_audit` returns the audit record for the latest memory update
 - `latest --field analysis_input` returns the replayable analyzer input artifact
 - `latest --field run_metrics` returns the per-run metrics artifact
 - `latest --field state` returns the synced state file path

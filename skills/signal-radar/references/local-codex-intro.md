@@ -88,6 +88,7 @@ python3 skills/signal-radar/monitor.py build-analysis-input --config skills/sign
 - 来源评价记忆在 `memory/sources/`
 - 来源记忆会由 `apply-memory` 自动累积 `metrics`、`rates`、`topic_counts` 和 `contribution_history`；`source_profile` 只负责 analyzer 提供的定性画像
 - 疑似冲突观察在 `memory/contradictions/`
+- memory update 审计记录在 `memory/audit/`
 - 标准化 batch 产物是 `collector_batch_<run_id>.json`
 - 分析输入产物是 `analysis_input_<run_id>.json`
 - LLM prompt 由 `build-analysis-input` 生成到 `prompt_<run_id>.txt`

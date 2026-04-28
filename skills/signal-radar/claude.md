@@ -383,7 +383,10 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 - `memory/macro/<macro-id>.json`：宏观趋势记忆
 - `memory/sources/<source-id>.json`：来源评价记忆
 - `memory/contradictions/<contradiction-id>.json`：疑似冲突观察
+- `memory/audit/<update-id>.json`：memory update 审计记录
 - `memory/index.json`：汇总索引
+
+`apply-memory` 会为每个 `update_id` 写入或复用一份 `memory/audit/<update-id>.json`。审计记录包含 summary、analysis input、prompt、collector batch、输入 item ids、事件簇 ids、应用状态、更新计数、发生变化的 memory 文件、before/after hash、before/after 内容快照和 unified diff。重复执行同一个 summary 时不会覆盖第一次真实应用的 audit 记录。
 
 当前记忆写入前会做两层归一化：
 
@@ -530,6 +533,7 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 │   ├── events/             # 一个持续事件一个时间线文件
 │   ├── macro/              # 一个宏观趋势一个文件
 │   ├── sources/            # 一个来源一个评价文件
+│   ├── audit/              # 一个 memory update 一个审计文件
 │   ├── index.json          # 记忆总索引
 │   └── .write.lock         # 本地并发写锁（运行时文件，不提交）
 ├── latest_run.json         # 最近一次运行的产物索引
@@ -566,6 +570,7 @@ python3 monitor.py latest --config config.yaml --field new_tweet_count
 python3 monitor.py latest --config config.yaml --field collector_batch
 python3 monitor.py latest --config config.yaml --field analysis_input
 python3 monitor.py latest --config config.yaml --field prompt
+python3 monitor.py latest --config config.yaml --field memory_audit
 python3 monitor.py latest --config config.yaml --field run_metrics
 python3 monitor.py latest --config config.yaml --field warning
 python3 monitor.py latest --config config.yaml --field state

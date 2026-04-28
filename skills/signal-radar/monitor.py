@@ -23,6 +23,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from signal_radar.audit import (
+    build_memory_audit_record,
+    read_memory_audit_record,
+    snapshot_memory_tree,
+    write_memory_audit_record,
+)
 from signal_radar.config import (
     atomic_write_json,
     atomic_write_text,
@@ -1041,6 +1047,7 @@ def latest(config_path: str, field: str | None) -> int:
         "report",
         "summary",
         "memory_update",
+        "memory_audit",
         "run_metrics",
         "warning",
     }:
@@ -1129,6 +1136,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         secondary_alias_config=config.get("secondary_theme_aliases", {}),
     )
     memory_store = create_memory_backend(config, normalizer=normalizer)
+    memory_before_snapshot = snapshot_memory_tree(memory_store.root)
     seen_at = utc_now().isoformat()
     theme_updates = 0
     account_updates = 0
@@ -1266,6 +1274,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
             memory_store.rebuild_index()
 
     state.save(update_last_run=False)
+    memory_after_snapshot = snapshot_memory_tree(memory_store.root)
 
     memory_update_path = (
         Path(latest_payload.get("paths", {}).get("memory_update"))
@@ -1289,6 +1298,18 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         + source_observation_updates
         + contradiction_updates
     )
+    update_counts = {
+        "memory_updates": memory_updates_total,
+        "theme_updates": theme_updates,
+        "account_updates": account_updates,
+        "entity_updates": entity_updates,
+        "event_updates": event_updates,
+        "macro_updates": macro_updates,
+        "source_updates": source_updates,
+        "source_observation_updates": source_observation_updates,
+        "contradiction_updates": contradiction_updates,
+    }
+    already_applied = memory_updates_total == 0
 
     payload = {
         "update_id": update_id,
@@ -1320,17 +1341,31 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "source_updates_applied": source_updates,
         "source_observation_updates_applied": source_observation_updates,
         "contradiction_updates_applied": contradiction_updates,
-        "already_applied": (
-            theme_updates == 0
-            and account_updates == 0
-            and entity_updates == 0
-            and event_updates == 0
-            and macro_updates == 0
-            and source_updates == 0
-            and source_observation_updates == 0
-            and contradiction_updates == 0
-        ),
+        "already_applied": already_applied,
     }
+
+    audit_record = build_memory_audit_record(
+        update_id=update_id,
+        status="already_applied" if already_applied else "auto_applied",
+        applied_at=seen_at,
+        memory_dir=memory_store.root,
+        memory_backend=config["memory_backend"],
+        before_snapshot=memory_before_snapshot,
+        after_snapshot=memory_after_snapshot,
+        parsed_memory_update=parsed,
+        update_counts=update_counts,
+        latest_payload=latest_payload,
+        summary_file=str(stored_summary_path),
+        memory_update_file=str(memory_update_path),
+        run_metrics_file=str(run_metrics_path),
+        config_path=config["config_path"],
+    )
+    memory_audit_path = write_memory_audit_record(memory_store.root, audit_record)
+    effective_audit_record = read_memory_audit_record(memory_audit_path) or audit_record
+    payload["memory_audit"] = str(memory_audit_path)
+    payload["memory_audit_changed_file_count"] = effective_audit_record[
+        "changed_file_count"
+    ]
     atomic_write_json(memory_update_path, payload)
 
     run_metrics_payload = read_json_file(
@@ -1361,28 +1396,30 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "contradictions": len(parsed["contradictions"]),
     }
     run_metrics_payload["memory"] = {
-        "memory_updates": memory_updates_total,
-        "theme_updates": theme_updates,
-        "account_updates": account_updates,
-        "entity_updates": entity_updates,
-        "event_updates": event_updates,
-        "macro_updates": macro_updates,
-        "source_updates": source_updates,
-        "source_observation_updates": source_observation_updates,
-        "contradiction_updates": contradiction_updates,
+        **update_counts,
         "already_applied": payload["already_applied"],
+        "memory_audit": str(memory_audit_path),
+        "memory_audit_changed_file_count": effective_audit_record[
+            "changed_file_count"
+        ],
     }
     atomic_write_json(run_metrics_path, run_metrics_payload)
 
     latest_payload.setdefault("paths", {})
     latest_payload["paths"]["summary"] = str(stored_summary_path)
     latest_payload["paths"]["memory_update"] = str(memory_update_path)
+    latest_payload["paths"]["memory_audit"] = str(memory_audit_path)
     latest_payload["paths"]["run_metrics"] = str(run_metrics_path)
     latest_payload["paths"]["memory_index"] = str(memory_store.index_path)
     latest_payload["paths"]["state"] = config["state_file"]
     latest_payload["memory_backend"] = config["memory_backend"]
     latest_payload["memory_update_applied"] = True
     latest_payload["memory_update"] = payload
+    latest_payload["memory_audit"] = {
+        "path": str(memory_audit_path),
+        "status": effective_audit_record["status"],
+        "changed_file_count": effective_audit_record["changed_file_count"],
+    }
     latest_payload["run_metrics"] = run_metrics_payload
     if not isinstance(latest_payload.get("summary"), dict):
         latest_payload["summary"] = {}
@@ -1432,6 +1469,7 @@ def build_parser() -> argparse.ArgumentParser:
             "report",
             "summary",
             "memory_update",
+            "memory_audit",
             "run_metrics",
             "memory_dir",
             "memory_backend",

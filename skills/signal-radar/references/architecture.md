@@ -264,9 +264,10 @@ collector 的责任是把这些失败表达成文件和 manifest 字段，而不
 - `memory/macro/<macro-id>.json`
 - `memory/sources/<source-id>.json`
 - `memory/contradictions/<contradiction-id>.json`
+- `memory/audit/<update-id>.json`
 - `memory/index.json`
 
-`accounts/` 和 `themes/` 保留原有账号画像与宽泛主题记忆。`entities/`、`events/`、`macro/`、`sources/` 和 `contradictions/` 用于金融/地缘场景下的 claim-driven memory，详细契约见 `references/memory-schema.md`。
+`accounts/` 和 `themes/` 保留原有账号画像与宽泛主题记忆。`entities/`、`events/`、`macro/`、`sources/` 和 `contradictions/` 用于金融/地缘场景下的 claim-driven memory。`audit/` 记录每次 memory update 的应用状态、关联 artifacts、变更文件、before/after hash 和 diff，详细契约见 `references/memory-schema.md`。
 
 这里的关键边界是：业务层依赖 `MemoryBackend` 和 `MEMORY_UPDATE` contract，而不是依赖文件路径本身。当前只实现 `FileMemoryStore`，未来如果需要 Postgres，应新增 backend 实现，不应改 analyzer 输出协议。
 
@@ -443,7 +444,7 @@ analyzer 依赖的应该是稳定 prompt 和 replayable input，而不是直接�
 
 ### Analyzer -> Local Store
 
-analyzer 的职责是输出可解析的 `MEMORY_UPDATE`。真正把它翻译成 backend 写入的提交者，应该始终是 `apply-memory`。
+analyzer 的职责是输出可解析的 `MEMORY_UPDATE`。真正把它翻译成 backend 写入的提交者，应该始终是 `apply-memory`。`apply-memory` 还必须写入或复用 `memory/audit/<update-id>.json`，让每次记忆变化可回放、可审计，并为后续撤销打基础。
 
 ### Local Store -> Digest / Alerts
 
