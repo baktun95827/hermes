@@ -1,8 +1,10 @@
-# Signal Radar — Hermes Agent 推文监控与智能分析系统
+# Signal Radar — 市场信号雷达与 Hermes 分析 Worker
 
 ## 项目概述
 
-Signal Radar 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系统。它定期抓取指定账号的推文，通过 LLM 按主题归类生成中文简报，并发送到 Telegram。系统具备去重、记忆、账号发现等能力，设计目标是成为一个**长期运行、越用越聪明**的信息助手。
+Signal Radar 当前以 Hermes skill 形态运行，但目标不是只做一个 X (Twitter) 推文监控脚本。它更准确的定位是：面向金融、地缘政治、宏观和主题投资的信息雷达。系统接收 X、未来的雪球 / Reddit / RSS / 新闻，以及人工粘贴的研究材料，通过 LLM 抽取信息单元、判断新增价值，并把有价值的标的、事件、宏观和来源记忆提交到当前 memory backend。
+
+现阶段 Hermes 适合作为 **内部分析 worker / prompt runner / 原型编排器**。它负责把 `collector_batch`、memory context 和分析 prompt 串起来，帮助快速打磨 `MEMORY_UPDATE` 契约和判断范式。但 Hermes skill 不应该被视为长期产品的主壳：正式的长期监控、Web 输入、多用户、任务队列、权限和审计入口，最终应该由 Web/API 服务承载。
 
 ## 文档分工
 
@@ -16,23 +18,24 @@ Signal Radar 是一个运行在 Hermes Agent 上的 X (Twitter) 推文监控系�
 
 ### 核心理念
 
-传统的推文监控工具是"按账号罗列"——你关注了谁，就看谁的推文。Signal Radar 的思路不同：它把所有监控账号的推文打散，**按主题重新组织**。你关注的不是"Elon Musk 说了什么"，而是"AI 领域今天发生了什么，哪些人在讨论"。
+传统的社交监控工具是"按账号罗列"——你关注了谁，就看谁的内容。Signal Radar 的思路不同：它把不同来源的内容打散，**按主题、标的、事件和信息单元重新组织**。你关注的不是"某个账号说了什么"，而是"AI 算力链、CCL 涨价、英维克订单、霍尔木兹海峡或美联储路径到底出现了什么新增变化"。
 
-这更接近一个私人情报分析员的工作方式：跨源收集 → 主题归类 → 趋势追踪 → 简报输出。
+这更接近一个研究情报分析员的工作方式：跨源收集 / 人工输入 → 信息单元抽取 → 新旧记忆对比 → 主题与标的影响判断 → 记忆更新建议 → 简报或告警输出。
 
 ---
 
 ## 分层架构
 
 ```text
-collector -> analysis input -> local store -> analyzer -> digest / alerts
+sources / manual input -> collector batch -> analysis input -> local store -> analyzer -> digest / alerts
 ```
 
 当前代码映射关系：
 
 - `collector`
   - `monitor.py collect`
-  - 负责 Playwright、cookies、滚动、DOM 提取、warning 判断、标准化 collector batch 和原始产物生成
+  - 当前负责 X Playwright、cookies、滚动、DOM 提取、warning 判断、标准化 collector batch 和原始产物生成
+  - 后续应扩展为多个 source adapter，包括 manual text、雪球、Reddit、RSS、新闻和官方公告
 - `analysis input`
   - `monitor.py build-analysis-input`
   - 负责把 `collector_batch`、discovery hints、当前 memory context 组装成 `analysis_input_*.json` 和 `prompt_*.txt`
@@ -61,6 +64,8 @@ collector -> analysis input -> local store -> analyzer -> digest / alerts
 - Playwright + Chromium（无头浏览器）
 - X.com（通过浏览器 cookies 认证）
 
+注意：这些是当前 X collector 的依赖，不是 Signal Radar 核心分析链路的必要依赖。手动输入、RSS、新闻或数据库队列只要能产出 `collector-batch/v1`，理论上可以复用后续分析和 memory 更新链路。
+
 这些层故意分开，原因不是抽象，而是失败模式不同：
 
 - collector 失败，通常是 cookies、选择器、页面加载、风控
@@ -69,7 +74,38 @@ collector -> analysis input -> local store -> analyzer -> digest / alerts
 - analyzer 失败，通常是主题判断、记忆质量、输出格式
 - digest / alerts 失败，通常是错误地发送、漏发、误发
 
-因此当前实现不建议用“一个大 agent 从打开 X 一路干到发 Telegram”为主路径。更稳的方式是：collector 只负责拿材料，analysis input builder 只负责组装分析输入，analyzer 只负责判断价值，digest / alerts 只负责对外输出。
+因此当前实现不建议用“一个大 agent 从打开 X 一路干到发 Telegram”为主路径。更稳的方式是：collector / manual ingest 只负责拿材料，analysis input builder 只负责组装分析输入，analyzer 只负责判断价值，digest / alerts 只负责对外输出。
+
+## Hermes 与产品形态边界
+
+Hermes skill 的优点是启动快、适合单人本地开发、适合把 prompt、memory、artifacts 和 apply-memory 流程跑通。它非常适合当前阶段用来验证：
+
+- 什么样的信息值得进入 `information_units`
+- 什么样的 claim 应该进入 `entity_updates` / `event_updates` / `macro_updates`
+- `MEMORY_UPDATE` 是否足够表达新增信息、冲突、thesis 影响和来源画像
+- 文件 memory 能否作为未来正式数据库 schema 的原型
+
+但如果目标是长期监视多渠道社交媒体和新闻，同时支持手动输入，Hermes skill 不能作为最终产品主壳。主要限制是：
+
+- **交互形态限制**：手动输入长期靠 CLI、文件和对话不稳定，Web 表单 / API 更适合粘贴文本、上传链接、标注来源和查看处理结果。
+- **调度限制**：多渠道抓取需要队列、重试、限流、游标、失败恢复和可观测性，不能长期依赖 skill 内部的单脚本 cron。
+- **并发限制**：多个 collector、manual ingest 和 analyzer 同时写入时，文件 memory、`.write.lock` 和 `latest_run.json` 只能支撑单机开发，不适合产品并发。
+- **控制面限制**：`latest_run.json` 是单运行入口，适合 Hermes 读取最新产物，但不适合作为多任务、多用户、多来源并行的产品控制面。
+- **产品能力限制**：权限、用户输入历史、任务状态、错误提示、反馈、审计查询和回放，应由 Web/API 和数据库负责，不应塞进 Hermes skill。
+
+因此长期架构应该是：
+
+```text
+Web / API / scheduler / crawler
+→ collector_batch/v1
+→ analysis input builder
+→ Hermes or LLM analysis worker
+→ MEMORY_UPDATE proposal
+→ MemoryStore validation and commit
+→ UI / digest / alerts
+```
+
+一句话：Hermes 适合继续做“脑”和原型 worker，不适合继续做“壳”。产品入口应该逐步前移到 Web/API，核心业务契约保持在 `collector_batch/v1`、`analysis_input/v1`、`MEMORY_UPDATE` 和 `MemoryBackend`。
 
 ## 多来源准备态
 
@@ -89,6 +125,41 @@ collector -> analysis input -> local store -> analyzer -> digest / alerts
   - 描述认证方式、healthcheck、能力边界、标准化约定
 
 也就是说，这一步已经把“多来源接入方式”写清楚了，但还没有宣称运行时已经全面切到多来源框架。
+
+## 手动输入与 Web/API 入口
+
+手动输入不是旁路功能，而应该被建模成一个正式 source。原因很直接：真实研究工作里，很多高价值材料来自人工粘贴的新闻、研报片段、微信群/Telegram 转述、公告摘要、网页链接或自己写的观察，而不是爬虫自动抓到的内容。
+
+推荐的最小链路是：
+
+```text
+manual text / URL / note
+→ manual collector item
+→ collector_batch/v1 with source = manual
+→ build-analysis-input
+→ analyzer outputs MEMORY_UPDATE
+→ apply-memory commits through MemoryBackend
+```
+
+手动输入不要直接改 memory。它应该和 X、雪球、Reddit 一样，先变成标准化证据项，再由 analyzer 判断它是新事件、旧事件更新、确认、冲突、复读还是噪音。
+
+建议的 manual item 约定：
+
+- `source`: `manual`
+- `canonical_id`: `manual:<sha256>`，由正文、来源标签和时间窗口生成，避免重复粘贴导致重复处理
+- `content_type`: `note`、`article`、`quote` 或 `post`
+- `author.canonical_entity_id`: 例如 `manual:user_note`、`manual:research_clip`、`manual:wechat_forward`
+- `source_meta.input_channel`: `web`、`cli`、`api`、`import`
+- `source_meta.user_label`: 人工填写的来源标签，例如“微信群转述”“券商电话会摘要”“公告摘录”
+- `source_meta.requires_verification`: 默认 `true`，除非明确来自官方公告或可验证链接
+
+前端网页可以先很薄，只做三件事：
+
+- 提交文本、链接、来源标签和备注
+- 展示本次生成的 `analysis_input`、summary、`MEMORY_UPDATE` 和 audit 路径
+- 允许标记 `useful`、`noise`、`wrong` 或 `needs_verification`
+
+在当前阶段，Web/API 可以只是本地服务或极简页面，背后仍然调用现有 CLI 或 Python 包。关键不是 UI 复杂度，而是不要让 Web 输入绕过 `collector_batch` 和 `apply-memory` 契约。
 
 ---
 
