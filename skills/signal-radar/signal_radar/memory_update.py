@@ -13,10 +13,16 @@ from .schemas import (
     coerce_string_list,
     normalize_account_name,
     normalize_alert_level,
+    normalize_changed_dimensions,
     normalize_conflict_type,
     normalize_contradiction_severity,
+    normalize_information_event_type,
     normalize_memory_action,
+    normalize_relation_to_memory,
+    normalize_time_horizon,
+    normalize_verification_status,
     stable_event_cluster_id,
+    stable_information_unit_id,
     unique_preserving_order,
 )
 
@@ -26,6 +32,7 @@ def empty_memory_update() -> dict[str, Any]:
         "primary_themes": [],
         "secondary_themes": {},
         "account_notes": {},
+        "information_units": [],
         "event_clusters": [],
         "signal_evaluations": [],
         "entity_updates": [],
@@ -104,6 +111,70 @@ def coerce_event_clusters(value: Any) -> list[dict[str, Any]]:
         )
         payload["what_changed"] = clean_text(payload.get("what_changed"))
         if payload["title"] or payload["summary"] or payload["evidence_item_ids"]:
+            normalized.append(payload)
+    return normalized
+
+
+def coerce_information_units(value: Any) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for item in coerce_dict_list(value):
+        payload = dict(item)
+        affected_entities = coerce_string_list(
+            payload.get("affected_entities") or payload.get("related_entity_ids")
+        )
+        affected_themes = coerce_string_list(
+            payload.get("affected_themes") or payload.get("secondary_themes")
+        )
+        payload["information_unit_id"] = stable_information_unit_id(payload)
+        payload["cluster_id"] = clean_text(payload.get("cluster_id"))
+        payload["event_type"] = normalize_information_event_type(
+            payload.get("event_type") or payload.get("type")
+        )
+        payload["relation_to_memory"] = normalize_relation_to_memory(
+            payload.get("relation_to_memory")
+            or payload.get("memory_relation")
+            or payload.get("relation")
+        )
+        payload["subject"] = clean_text(
+            payload.get("subject")
+            or payload.get("target")
+            or payload.get("entity")
+            or payload.get("topic")
+        )
+        payload["claim"] = clean_text(
+            payload.get("claim") or payload.get("summary") or payload.get("observation")
+        )
+        payload["what_changed"] = clean_text(payload.get("what_changed"))
+        payload["changed_dimensions"] = normalize_changed_dimensions(
+            payload.get("changed_dimensions") or payload.get("dimensions")
+        )
+        payload["affected_entities"] = affected_entities
+        payload["affected_themes"] = affected_themes
+        payload["related_entity_ids"] = coerce_string_list(
+            payload.get("related_entity_ids") or affected_entities
+        )
+        payload["related_event_ids"] = coerce_string_list(
+            payload.get("related_event_ids")
+        )
+        payload["related_macro_ids"] = coerce_string_list(
+            payload.get("related_macro_ids")
+        )
+        payload["related_thesis_ids"] = coerce_string_list(
+            payload.get("related_thesis_ids")
+        )
+        payload["market_mechanism"] = clean_text(payload.get("market_mechanism"))
+        payload["time_horizon"] = normalize_time_horizon(payload.get("time_horizon"))
+        payload["verification_status"] = normalize_verification_status(
+            payload.get("verification_status")
+        )
+        payload["evidence_item_ids"] = coerce_string_list(
+            payload.get("evidence_item_ids")
+            or payload.get("tweet_ids")
+            or payload.get("item_ids")
+        )
+        payload["source_ids"] = coerce_string_list(payload.get("source_ids"))
+        payload["signal_evaluation"] = build_signal_evaluation(payload)
+        if payload["claim"] or payload["subject"] or payload["evidence_item_ids"]:
             normalized.append(payload)
     return normalized
 
@@ -321,6 +392,9 @@ def parse_memory_update(summary_text: str) -> dict[str, Any]:
             payload.get("secondary_themes")
         )
         parsed["account_notes"] = coerce_account_notes(payload.get("account_notes"))
+        parsed["information_units"] = coerce_information_units(
+            payload.get("information_units")
+        )
         parsed["event_clusters"] = coerce_event_clusters(payload.get("event_clusters"))
         parsed["signal_evaluations"] = coerce_signal_evaluations(
             payload.get("signal_evaluations")
@@ -341,6 +415,7 @@ def parse_memory_update(summary_text: str) -> dict[str, Any]:
             parsed["primary_themes"]
             or parsed["secondary_themes"]
             or parsed["account_notes"]
+            or parsed["information_units"]
             or parsed["event_clusters"]
             or parsed["signal_evaluations"]
             or parsed["entity_updates"]

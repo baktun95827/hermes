@@ -143,8 +143,9 @@ Generate a Chinese brief from that prompt with this output discipline:
 - Use `primary_themes` for stable一级主题
 - Use `secondary_themes` to map each一级主题 to more specific二级主题
 - Use `account_notes` with usernames as keys and no leading `@`
+- Use `information_units` to model concrete market/geopolitical claims before deciding whether they are new events, updates, confirmations, contradictions, repeats, or noise
 - Use `event_clusters` to group multiple posts about the same event before writing claim updates
-- Use `signal_evaluations` and per-claim `signal_evaluation` to decide whether a signal is new, repeated, noise, worth writing, or worth alerting
+- Use `signal_evaluations`, per-information-unit fields, and per-claim `signal_evaluation` to decide whether a signal is new, repeated, noise, worth writing, or worth alerting
 - Use `what_changed`, `changed_since`, and `prior_claim_refs` on accepted claim updates to explain the actual diff versus memory or the recent run
 - Use `entity_updates` for stocks, companies, sectors, and supply-chain objects; include `thesis_update` when a signal changes an investment thesis
 - Use `event_updates` for time-evolving events such as Iran/Hormuz
@@ -166,6 +167,31 @@ Expected `MEMORY_UPDATE` shape:
   "account_notes": {
     "example_user": "经常发布半导体和AI基础设施链条观点，需要结合公告和新闻交叉确认。"
   },
+  "information_units": [
+    {
+      "information_unit_id": "info:yingweike-liquid-cooling-angle",
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "event_type": "industry_chain_signal",
+      "relation_to_memory": "new_event",
+      "subject": "英维克液冷/温控业务",
+      "claim": "市场开始把英维克液冷/温控业务弹性和算力基础设施扩张联系起来。",
+      "what_changed": "相对旧记忆，本次新增的是产业链需求传导角度，不是已验证订单。",
+      "changed_dimensions": ["market_expectation", "demand"],
+      "affected_entities": ["cn_equity:英维克"],
+      "affected_themes": ["AI/算力", "液冷/温控"],
+      "market_mechanism": "算力基础设施扩张可能提升液冷需求，从而影响收入弹性和估值预期。",
+      "time_horizon": "quarters",
+      "verification_status": "plausible",
+      "signal_type": "new_angle",
+      "novelty_level": "medium",
+      "evidence_strength": "single_source",
+      "memory_action": "write",
+      "alert_level": "watch",
+      "confidence": 0.55,
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"]
+    }
+  ],
   "event_clusters": [
     {
       "cluster_id": "xcluster:liquid-cooling-20260428",
@@ -309,12 +335,13 @@ Behavior notes:
 
 - `apply-memory` is idempotent for the same summary input; rerunning it does not inflate theme counts
 - 一级主题和二级主题都会先经过 alias 归一化再写入 memory
+- `information_units` are recorded in `memory_update_*.json` and `run_metrics_*.json`; they describe concrete market/geopolitical claims before cluster-level or memory-level decisions
 - `event_clusters` are recorded in `memory_update_*.json` and `run_metrics_*.json`; they group same-event posts but do not create long-run memory by themselves
 - structured updates with `verification_status: rejected`, explicit skip actions, `signal_type: noise`, `memory_action: skip|reject`, or no novelty are ignored
 - accepted claim updates store `cluster_id`, `signal_evaluation`, `what_changed`, `changed_since`, `prior_claim_refs`, `last_valuable_at`, `status`, and optional `decay_score` in the file backend
 - accepted `entity_updates.thesis_update` entries are merged into the entity file's `theses` map; this keeps bull/bear cases, watchpoints, invalidation points, catalysts, and thesis status next to the related claims
 - accepted `source_assessments.source_profile` entries update structured source memory: `source_type`, `topic_scores`, `repeat_tendency`, `repeat_rate`, `hit_rate`, `trust_score`, `valuable_count`, `marketing_tendency`, `emotion_tendency`, `primary_source_score`, `confirmation_required`, and `bias_tags`
-- event clusters, signal evaluations, accepted claim updates, and contradictions automatically update source `metrics`, `rates`, `topic_counts`, and `contribution_history`; do not ask the analyzer to manually invent those counters
+- information units, event clusters, signal evaluations, accepted claim updates, and contradictions automatically update source `metrics`, `rates`, `topic_counts`, and `contribution_history`; do not ask the analyzer to manually invent those counters
 - every `apply-memory` writes or reuses a file-backed audit record in `memory/audit/`; the audit links summary/prompt/input artifacts, input item ids, event cluster ids, update counts, changed memory files, before/after hashes, and unified diffs
 - `alert_candidates` are recorded in `memory_update_*.json`; sending them is a downstream digest/alert decision
 - `contradictions` are recorded under `memory/contradictions/` and indexed, but they do not automatically rewrite related entity, event, or macro memory conclusions

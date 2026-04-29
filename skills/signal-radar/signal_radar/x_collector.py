@@ -633,6 +633,8 @@ def build_collect_run_metrics(
             "keyword_count": 0,
         },
         "analysis": {
+            "information_units": 0,
+            "high_novelty_information_units": 0,
             "event_clusters": 0,
             "high_novelty_events": 0,
             "signal_evaluations": 0,
@@ -687,5 +689,4 @@ def build_collection_warning(results: list[FetchResult]) -> str | None:
         f"{details}\n"
         "可能原因包括 cookies 失效、页面结构变化、账号受限，或网络异常。"
     )
-
 

@@ -136,6 +136,7 @@ def build_changed_files(
 def collect_input_item_ids(parsed_memory_update: dict[str, Any]) -> list[str]:
     item_ids: list[str] = []
     for key in (
+        "information_units",
         "event_clusters",
         "signal_evaluations",
         "entity_updates",
@@ -158,7 +159,13 @@ def collect_event_cluster_ids(parsed_memory_update: dict[str, Any]) -> list[str]
             cluster_id = clean_text(item.get("cluster_id"))
             if cluster_id:
                 cluster_ids.append(cluster_id)
-    for key in ("signal_evaluations", "entity_updates", "event_updates", "macro_updates"):
+    for key in (
+        "information_units",
+        "signal_evaluations",
+        "entity_updates",
+        "event_updates",
+        "macro_updates",
+    ):
         for item in parsed_memory_update.get(key) or []:
             if isinstance(item, dict):
                 cluster_id = clean_text(item.get("cluster_id"))

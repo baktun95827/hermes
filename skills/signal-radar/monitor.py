@@ -67,6 +67,15 @@ def timestamp_slug(now: datetime | None = None) -> str:
     return (now or utc_now()).strftime("%Y%m%d_%H%M%S")
 
 
+def count_high_novelty_information_units(
+    information_units: list[dict[str, Any]],
+) -> int:
+    return sum(
+        1
+        for item in information_units
+        if build_signal_evaluation(item).get("novelty_level") == "high"
+    )
+
 
 def count_high_novelty_event_clusters(event_clusters: list[dict[str, Any]]) -> int:
     return sum(
@@ -337,6 +346,31 @@ def build_llm_prompt(
   "account_notes": {
     "example_user": "经常发布半导体和AI基础设施链条观点，需要结合公告和新闻交叉确认。"
   },
+  "information_units": [
+    {
+      "information_unit_id": "info:yingweike-liquid-cooling-angle",
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "event_type": "industry_chain_signal",
+      "relation_to_memory": "new_event",
+      "subject": "英维克液冷/温控业务",
+      "claim": "市场开始把英维克液冷/温控业务弹性和算力基础设施扩张联系起来。",
+      "what_changed": "相对旧记忆，本次新增的是产业链需求传导角度，不是已验证订单。",
+      "changed_dimensions": ["market_expectation", "demand"],
+      "affected_entities": ["cn_equity:英维克"],
+      "affected_themes": ["AI/算力", "液冷/温控"],
+      "market_mechanism": "算力基础设施扩张可能提升液冷需求，从而影响收入弹性和估值预期。",
+      "time_horizon": "quarters",
+      "verification_status": "plausible",
+      "signal_type": "new_angle",
+      "novelty_level": "medium",
+      "evidence_strength": "single_source",
+      "memory_action": "write",
+      "alert_level": "watch",
+      "confidence": 0.55,
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"]
+    }
+  ],
   "event_clusters": [
     {
       "cluster_id": "xcluster:liquid-cooling-20260428",
@@ -527,21 +561,25 @@ def build_llm_prompt(
 13. `claim_type` 可使用 `fact`、`thesis`、`rumor`、`signal`；观点和推演不要写成事实
 14. 每个重要 claim 都应尽量带 `signal_evaluation`：`signal_type` 用 `new_fact`、`new_angle`、`confirmation`、`repeat`、`noise`；`novelty_level` 用 `high`、`medium`、`low`、`none`；`evidence_strength` 用 `weak`、`single_source`、`multi_source`、`official`
 15. `memory_action` 用 `write`、`merge`、`skip`、`supersede`、`reject`；重复、噪音或无新增价值的信息应该使用 `skip` 或不进入结构化更新
-16. 先用 `event_clusters` 把同一件事合并成事件簇，再让 `entity_updates` / `event_updates` / `macro_updates` 引用同一个 `cluster_id`
-17. `cluster_id` 格式建议为 `xcluster:<主题>-<日期>`；同一事件被多账号转述时只能算一个 cluster
-18. 对写入 `entity_updates` / `event_updates` / `macro_updates` 的重要 claim，尽量填写 `what_changed`、`changed_since`、`prior_claim_refs`，说明相对旧记忆或近期 run 变化在哪里
-19. `changed_since` 只能使用 `last_memory`、`recent_run`、`unknown`
-20. `alert_candidates` 只表示候选告警，不等于一定发送；只有 `watch`、`important`、`urgent` 才值得写入
-21. `contradictions` 只记录疑似冲突，不自动判定真假；`conflict_type` 用 `source_conflict`、`data_conflict`、`official_unverified`，`severity` 用 `low`、`medium`、`high`
-22. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
-23. 如果标的信息会改变投资假设，在对应 `entity_updates` 内嵌 `thesis_update`，维护 `bull_case`、`bear_case`、`key_watchpoints`、`invalidation_points`、`catalysts`、`thesis_status`
-24. `thesis_update.thesis_status` 用 `active`、`watch`、`strengthened`、`weakened`、`invalidated`、`superseded`；`direction` 用 `bull`、`bear`、`neutral`、`mixed`
-25. `event_updates` 用于会随时间发展的事件，按时间线追加
-26. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
-27. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度；`source_profile` 优先使用 `source_type`、`topic_scores`、`repeat_tendency`、`repeat_rate`、`hit_rate`、`trust_score`、`valuable_count`、`marketing_tendency`、`emotion_tendency`、`primary_source_score`、`confirmation_required`、`bias_tags`
-28. `source_type` 用 `primary`、`official`、`analyst`、`aggregator`、`trader`、`media`、`commentary`、`noise`；不确定用 `unknown`
-29. 来源画像里的 `metrics`、`rates`、`topic_counts`、`contribution_history` 由系统从 event clusters 和 claim updates 自动维护，不要在 MEMORY_UPDATE 里手工编造
-30. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
+16. 先抽取 `information_units`，再决定哪些单元应该合并为 `event_clusters`；不要只按文本相似度聚类
+17. `information_units.event_type` 用 `material_price_change`、`supply_disruption`、`company_order`、`geopolitical_update`、`policy_signal`、`macro_data`、`market_rumor`、`official_disclosure`、`market_price_action`、`fund_flow`、`earnings_update`、`industry_chain_signal`、`other`
+18. `information_units.relation_to_memory` 用 `new_event`、`event_update`、`confirmation`、`contradiction`、`repeat`、`noise`；同一事件的新进展用 `event_update`，不要当成简单重复
+19. `changed_dimensions` 用于说明具体变化维度，例如 `price`、`supply`、`demand`、`orders`、`capacity`、`policy`、`risk_level`、`liquidity`、`rates`、`earnings`、`valuation`、`market_expectation`
+20. 先用 `event_clusters` 把同一件事合并成事件簇，再让 `entity_updates` / `event_updates` / `macro_updates` 引用同一个 `cluster_id`
+21. `cluster_id` 格式建议为 `xcluster:<主题>-<日期>`；同一事件被多账号转述时只能算一个 cluster
+22. 对写入 `entity_updates` / `event_updates` / `macro_updates` 的重要 claim，尽量填写 `what_changed`、`changed_since`、`prior_claim_refs`，说明相对旧记忆或近期 run 变化在哪里
+23. `changed_since` 只能使用 `last_memory`、`recent_run`、`unknown`
+24. `alert_candidates` 只表示候选告警，不等于一定发送；只有 `watch`、`important`、`urgent` 才值得写入
+25. `contradictions` 只记录疑似冲突，不自动判定真假；`conflict_type` 用 `source_conflict`、`data_conflict`、`official_unverified`，`severity` 用 `low`、`medium`、`high`
+26. `entity_updates` 用于股票、公司、行业链条等可命名对象；新标的可以直接创建
+27. 如果标的信息会改变投资假设，在对应 `entity_updates` 内嵌 `thesis_update`，维护 `bull_case`、`bear_case`、`key_watchpoints`、`invalidation_points`、`catalysts`、`thesis_status`
+28. `thesis_update.thesis_status` 用 `active`、`watch`、`strengthened`、`weakened`、`invalidated`、`superseded`；`direction` 用 `bull`、`bear`、`neutral`、`mixed`
+29. `event_updates` 用于会随时间发展的事件，按时间线追加
+30. `macro_updates` 用于宏观趋势、经济环境、流动性、能源价格等跨标的背景
+31. `source_assessments` 用于记录账号或来源的可信度、偏见和需要确认程度；`source_profile` 优先使用 `source_type`、`topic_scores`、`repeat_tendency`、`repeat_rate`、`hit_rate`、`trust_score`、`valuable_count`、`marketing_tendency`、`emotion_tendency`、`primary_source_score`、`confirmation_required`、`bias_tags`
+32. `source_type` 用 `primary`、`official`、`analyst`、`aggregator`、`trader`、`media`、`commentary`、`noise`；不确定用 `unknown`
+33. 来源画像里的 `metrics`、`rates`、`topic_counts`、`contribution_history` 由系统从 information units、event clusters 和 claim updates 自动维护，不要在 MEMORY_UPDATE 里手工编造
+34. `### MEMORY_UPDATE` 后面必须是严格合法的 JSON，JSON 不要写注释，不要写尾逗号，`account_notes` 的 key 使用不带 `@` 的用户名
 {theme_hint}
 ## 历史上下文
 {history_context if history_context else "（首次运行，无历史数据）"}
@@ -1073,6 +1111,7 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         not parsed["primary_themes"]
         and not parsed["secondary_themes"]
         and not parsed["account_notes"]
+        and not parsed["information_units"]
         and not parsed["event_clusters"]
         and not parsed["signal_evaluations"]
         and not parsed["entity_updates"]
@@ -1221,6 +1260,19 @@ def apply_memory(config_path: str, summary_file: str) -> int:
             )
             source_observation_updates += updated_sources
 
+        for update in parsed["information_units"]:
+            cluster_id = clean_text(update.get("cluster_id"))
+            if cluster_id in observed_cluster_ids:
+                continue
+            if cluster_id and coerce_string_list(update.get("source_ids")):
+                observed_cluster_ids.add(cluster_id)
+            source_observation_updates += memory_store.update_source_observation(
+                update=update,
+                seen_at=seen_at,
+                update_id=update_id,
+                observation_kind="information_unit",
+            )
+
         for update in parsed["signal_evaluations"]:
             if clean_text(update.get("cluster_id")) in observed_cluster_ids:
                 continue
@@ -1319,6 +1371,8 @@ def apply_memory(config_path: str, summary_file: str) -> int:
         "primary_themes": normalized_primary,
         "secondary_themes": normalized_secondary_mapping,
         "account_notes": parsed["account_notes"],
+        "information_units": parsed["information_units"],
+        "information_unit_count": len(parsed["information_units"]),
         "event_clusters": parsed["event_clusters"],
         "event_cluster_count": len(parsed["event_clusters"]),
         "signal_evaluations": parsed["signal_evaluations"],
@@ -1384,6 +1438,10 @@ def apply_memory(config_path: str, summary_file: str) -> int:
     run_metrics_payload["updated_at"] = seen_at
     run_metrics_payload["analysis"] = {
         "memory_update_id": update_id,
+        "information_units": len(parsed["information_units"]),
+        "high_novelty_information_units": count_high_novelty_information_units(
+            parsed["information_units"]
+        ),
         "event_clusters": len(parsed["event_clusters"]),
         "high_novelty_events": count_high_novelty_event_clusters(
             parsed["event_clusters"]
@@ -1423,6 +1481,12 @@ def apply_memory(config_path: str, summary_file: str) -> int:
     latest_payload["run_metrics"] = run_metrics_payload
     if not isinstance(latest_payload.get("summary"), dict):
         latest_payload["summary"] = {}
+    latest_payload["summary"]["information_unit_count"] = len(
+        parsed["information_units"]
+    )
+    latest_payload["summary"]["high_novelty_information_unit_count"] = (
+        count_high_novelty_information_units(parsed["information_units"])
+    )
     latest_payload["summary"]["event_cluster_count"] = len(parsed["event_clusters"])
     latest_payload["summary"]["high_novelty_event_count"] = (
         count_high_novelty_event_clusters(parsed["event_clusters"])

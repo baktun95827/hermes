@@ -21,8 +21,8 @@ collect -> build-analysis-input -> analyzer -> apply-memory
 - `cookies.json`、`reports/`、`latest_run.json` 不应提交
 - `memory/state.json` 里 `updated_at` 是当前更可靠的状态写入时间，`last_run` 主要保留给旧消费者兼容使用
 - 记忆模型已经从宽泛主题扩展为 claim-driven memory，可维护标的、事件、宏观、来源评价和疑似冲突
-- `MEMORY_UPDATE` 现在也承载价值判断和 diff：`event_clusters`、`signal_evaluation`、`cluster_id`、`what_changed`、`contradictions`、`alert_candidates`
-- 每轮会生成 `run_metrics_<run_id>.json`，先记录抓取健康指标，再由 `build-analysis-input` 回填输入构建指标，最后由 `apply-memory` 回填事件簇和 memory 写入指标
+- `MEMORY_UPDATE` 现在也承载价值判断和 diff：`information_units`、`event_clusters`、`signal_evaluation`、`cluster_id`、`what_changed`、`contradictions`、`alert_candidates`
+- 每轮会生成 `run_metrics_<run_id>.json`，先记录抓取健康指标，再由 `build-analysis-input` 回填输入构建指标，最后由 `apply-memory` 回填信息单元、事件簇和 memory 写入指标
 
 ## 当前最重要的文件
 
@@ -86,7 +86,7 @@ python3 skills/signal-radar/monitor.py build-analysis-input --config skills/sign
 - 持续事件记忆在 `memory/events/`
 - 宏观趋势记忆在 `memory/macro/`
 - 来源评价记忆在 `memory/sources/`
-- 来源记忆会由 `apply-memory` 自动累积 `metrics`、`rates`、`topic_counts` 和 `contribution_history`；`source_profile` 只负责 analyzer 提供的定性画像
+- 来源记忆会由 `apply-memory` 从 information units、event clusters 和 claim updates 自动累积 `metrics`、`rates`、`topic_counts` 和 `contribution_history`；`source_profile` 只负责 analyzer 提供的定性画像
 - 疑似冲突观察在 `memory/contradictions/`
 - memory update 审计记录在 `memory/audit/`
 - 标准化 batch 产物是 `collector_batch_<run_id>.json`
@@ -94,7 +94,7 @@ python3 skills/signal-radar/monitor.py build-analysis-input --config skills/sign
 - LLM prompt 由 `build-analysis-input` 生成到 `prompt_<run_id>.txt`
 - 运行指标产物是 `run_metrics_<run_id>.json`
 - 统一 schema 是 `collector-batch/v1` 和 `collector-item/v1`
-- 结构化记忆更新可以包含 `event_clusters`、`signal_evaluations`、各 claim 的 `signal_evaluation`、diff 字段、标的内嵌 `thesis_update`、结构化 `source_profile`、疑似 `contradictions`、以及只供下游判断的 `alert_candidates`
+- 结构化记忆更新可以包含 `information_units`、`event_clusters`、`signal_evaluations`、各 claim 的 `signal_evaluation`、diff 字段、标的内嵌 `thesis_update`、结构化 `source_profile`、疑似 `contradictions`、以及只供下游判断的 `alert_candidates`
 
 ## 你改代码时最容易踩的坑
 
@@ -105,7 +105,7 @@ python3 skills/signal-radar/monitor.py build-analysis-input --config skills/sign
 - 不要让业务逻辑依赖“文件路径就是业务模型”；依赖 `MEMORY_UPDATE` 和 memory backend 边界
 - 不要把未经验证的社交媒体观点写成 `confirmed`
 - 不要把复读或噪音信号写进长期 memory；应使用 `signal_type: repeat|noise` 或 `memory_action: skip`
-- 不要把同一事件的多条转述当成多条新信息；先合并到同一个 `event_clusters[].cluster_id`
+- 不要把同一事件的多条转述当成多条新信息；先抽 `information_units`，再把真正同一事件合并到同一个 `event_clusters[].cluster_id`
 - 不要把 `contradictions` 当成事实裁决；它只是冲突观察，后续还需要验证
 - 不要把普通新闻都写成 thesis；只有信息改变 bull/bear case、关键验证点、证伪条件或催化时间表时才写 `thesis_update`
 - 不要把 analyzer 重新耦合回浏览器流程

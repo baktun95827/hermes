@@ -37,6 +37,7 @@ Accepted `claim_type` values:
 
 New keys:
 
+- `information_units`: concrete market/geopolitical claim units before cluster-level or memory-level decisions
 - `event_clusters`: run-level grouping of multiple posts about the same event; clusters are recorded in artifacts and metrics, not as long-run memory by themselves
 - `signal_evaluations`: run-level or cluster-level value judgments, including skipped signals
 - `entity_updates`: stocks, companies, sectors, supply-chain objects; may include embedded `thesis_update`
@@ -46,7 +47,7 @@ New keys:
 - `alert_candidates`: possible content alerts for the digest layer to decide on
 - `contradictions`: suspected conflicts between claims, sources, data, or missing official verification
 
-`signal_evaluation` is the shared value-judgment shape. It may appear inside `event_clusters`, `signal_evaluations`, claim updates, and alert candidates:
+`signal_evaluation` is the shared value-judgment shape. It may appear inside `information_units`, `event_clusters`, `signal_evaluations`, claim updates, and alert candidates:
 
 ```json
 {
@@ -68,6 +69,43 @@ Accepted values:
 - `evidence_strength`: `weak`, `single_source`, `multi_source`, `official`
 - `memory_action`: `write`, `merge`, `skip`, `supersede`, `reject`
 - `alert_level`: `none`, `watch`, `important`, `urgent`
+
+`information_units` should be emitted before `event_clusters` when individual posts contain distinct claims or when a same event has a meaningful update:
+
+```json
+{
+  "information_unit_id": "info:ccl-price-20260428",
+  "cluster_id": "xcluster:ccl-price-20260428",
+  "event_type": "material_price_change",
+  "relation_to_memory": "event_update",
+  "subject": "CCL 上游材料价格",
+  "claim": "社交媒体称部分 CCL 上游材料报价继续上调。",
+  "what_changed": "相对旧记忆，本次新增的是涨价范围可能从单点扩散到多个材料环节。",
+  "changed_dimensions": ["price", "supply", "market_expectation"],
+  "affected_entities": ["cn_equity:沪电股份"],
+  "affected_themes": ["PCB材料", "AI算力链"],
+  "market_mechanism": "上游材料涨价可能改变 PCB 链条利润分配，并影响市场对相关标的毛利率的预期。",
+  "time_horizon": "weeks",
+  "verification_status": "plausible",
+  "signal_type": "new_fact",
+  "novelty_level": "medium",
+  "evidence_strength": "single_source",
+  "memory_action": "write",
+  "alert_level": "watch",
+  "confidence": 0.55,
+  "evidence_item_ids": ["x:123"],
+  "source_ids": ["x:example_user"]
+}
+```
+
+Accepted values:
+
+- `event_type`: `material_price_change`, `supply_disruption`, `company_order`, `geopolitical_update`, `policy_signal`, `macro_data`, `market_rumor`, `official_disclosure`, `market_price_action`, `fund_flow`, `earnings_update`, `industry_chain_signal`, `other`
+- `relation_to_memory`: `new_event`, `event_update`, `confirmation`, `contradiction`, `repeat`, `noise`
+- `changed_dimensions`: common values include `price`, `supply`, `demand`, `orders`, `capacity`, `policy`, `risk_level`, `liquidity`, `rates`, `earnings`, `valuation`, `sentiment`, `positioning`, `timeline`, `official_status`, `market_expectation`
+- `time_horizon`: `intraday`, `days`, `weeks`, `months`, `quarters`, `years`
+
+`information_units` are recorded in `memory_update_*.json`, `run_metrics_*.json`, audit, and source observations. They do not create long-run entity/event/macro files by themselves; accepted long-run memory still comes from `entity_updates`, `event_updates`, and `macro_updates`.
 
 `event_clusters` should be emitted before claim updates when multiple posts discuss the same event:
 
@@ -143,6 +181,31 @@ Example:
   "account_notes": {
     "example_user": "经常发布半导体和AI基础设施链条观点，需要交叉确认。"
   },
+  "information_units": [
+    {
+      "information_unit_id": "info:yingweike-liquid-cooling-angle",
+      "cluster_id": "xcluster:liquid-cooling-20260428",
+      "event_type": "industry_chain_signal",
+      "relation_to_memory": "new_event",
+      "subject": "英维克液冷/温控业务",
+      "claim": "市场开始把英维克液冷/温控业务弹性和算力基础设施扩张联系起来。",
+      "what_changed": "相对旧记忆，本次新增的是产业链需求传导角度，不是已验证订单。",
+      "changed_dimensions": ["market_expectation", "demand"],
+      "affected_entities": ["cn_equity:英维克"],
+      "affected_themes": ["AI/算力", "液冷/温控"],
+      "market_mechanism": "算力基础设施扩张可能提升液冷需求，从而影响收入弹性和估值预期。",
+      "time_horizon": "quarters",
+      "verification_status": "plausible",
+      "signal_type": "new_angle",
+      "novelty_level": "medium",
+      "evidence_strength": "single_source",
+      "memory_action": "write",
+      "alert_level": "watch",
+      "confidence": 0.55,
+      "evidence_item_ids": ["x:123"],
+      "source_ids": ["x:example_user"]
+    }
+  ],
   "event_clusters": [
     {
       "cluster_id": "xcluster:liquid-cooling-20260428",

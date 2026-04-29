@@ -274,6 +274,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
   "account_notes": {
     "elonmusk": "近期主要讨论政府效率、AI 和航天。"
   },
+  "information_units": [],
   "event_clusters": [],
   "signal_evaluations": [],
   "entity_updates": [],
@@ -290,6 +291,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `primary_themes`：稳定的一级主题
 - `secondary_themes`：每个一级主题下的二级主题
 - `account_notes`：账号画像，key 使用不带 `@` 的用户名
+- `information_units`：具体信息单元，用于表达某条内容到底是材料涨价、供给扰动、公司订单、地缘进展、政策信号、宏观数据、市场传闻还是官方披露，以及它相对旧记忆是新事件、旧事件更新、确认、冲突、复读还是噪音
 - `event_clusters`：同一事件的多条内容聚合层，只记录本轮事件簇，不直接写长期 memory
 - `signal_evaluations`：run 级或事件簇级价值判断，可记录新事实、新角度、复读或噪音
 - `entity_updates`：股票、公司、行业链条等对象的 claim 记忆；如果信息改变投资假设，可内嵌 `thesis_update`
@@ -306,7 +308,7 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 
 这意味着历史 summary 仍可回放，但新流程的目标协议已经完全转向 JSON。
 
-`signal_evaluation` 是当前新增的价值判断核心，既可以出现在 `signal_evaluations`，也可以嵌入 `entity_updates`、`event_updates`、`macro_updates` 和 `alert_candidates`。核心字段包括：
+`signal_evaluation` 是当前新增的价值判断核心，既可以出现在 `information_units`、`signal_evaluations`，也可以嵌入 `entity_updates`、`event_updates`、`macro_updates` 和 `alert_candidates`。核心字段包括：
 
 - `signal_type`: `new_fact`、`new_angle`、`confirmation`、`repeat`、`noise`
 - `novelty_level`: `high`、`medium`、`low`、`none`
@@ -315,6 +317,23 @@ Signal Radar 的核心不是“按账号罗列推文”，而是“按主题重�
 - `alert_level`: `none`、`watch`、`important`、`urgent`
 
 `apply-memory` 会跳过 `signal_type: noise`、`novelty_level: none`、`memory_action: skip|reject` 或 `verification_status: rejected` 的结构化 claim。被接受的 claim 会在文件 backend 中保存 `cluster_id`、`signal_evaluation`、`last_valuable_at`、`status` 和可选 `decay_score`，这是后续 memory 衰减和污染控制的基础。
+
+`information_units` 是事件簇之前的主张单元，避免把“同一事件的新进展”误判成重复。建议字段包括：
+
+- `information_unit_id`
+- `cluster_id`
+- `event_type`: `material_price_change`、`supply_disruption`、`company_order`、`geopolitical_update`、`policy_signal`、`macro_data`、`market_rumor`、`official_disclosure`、`market_price_action`、`fund_flow`、`earnings_update`、`industry_chain_signal`、`other`
+- `relation_to_memory`: `new_event`、`event_update`、`confirmation`、`contradiction`、`repeat`、`noise`
+- `subject` / `claim` / `what_changed`
+- `changed_dimensions`: `price`、`supply`、`demand`、`orders`、`capacity`、`policy`、`risk_level`、`liquidity`、`rates`、`earnings`、`valuation`、`market_expectation`
+- `affected_entities` / `affected_themes`
+- `market_mechanism`
+- `time_horizon`: `intraday`、`days`、`weeks`、`months`、`quarters`、`years`
+- `verification_status`
+- `signal_type` / `novelty_level` / `evidence_strength` / `memory_action`
+- `evidence_item_ids` / `source_ids`
+
+当前第一步只把它写入 `memory_update_*.json`、`run_metrics_*.json`、audit 和来源 observation，不直接创建长期 memory 文件。是否进入 `entity_updates`、`event_updates` 或 `macro_updates`，仍由 analyzer 根据价值和验证程度单独提交。
 
 `event_clusters` 是把“散推总结”升级成“按事件判断”的中间层。它建议包含：
 
@@ -417,6 +436,8 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 - `primary_themes`
 - `secondary_themes`
 - `account_notes`
+- `information_units`
+- `information_unit_count`
 - `event_clusters`
 - `signal_evaluations`
 - `entity_updates`
@@ -437,7 +458,7 @@ contradiction detector 先做轻量记录，不做自动裁决。`contradictions
 - `contradiction_updates_applied`
 - `already_applied`
 
-此外，`reports/run_metrics_*.json` 是每轮机器可读指标。`collect` 先写抓取健康指标，例如账号成功/失败、可见推文、新推文、warning 和运行耗时；`build-analysis-input` 补 `analysis_input` 是否构建、输入条数、发现推荐数和关键词数；`apply-memory` 再补分析指标，例如 `event_clusters`、`high_novelty_events`、候选告警、冲突数和实际 memory 写入数。它用于区分“真的没新信息”和“抓取/分析链路出问题”。
+此外，`reports/run_metrics_*.json` 是每轮机器可读指标。`collect` 先写抓取健康指标，例如账号成功/失败、可见推文、新推文、warning 和运行耗时；`build-analysis-input` 补 `analysis_input` 是否构建、输入条数、发现推荐数和关键词数；`apply-memory` 再补分析指标，例如 `information_units`、`high_novelty_information_units`、`event_clusters`、`high_novelty_events`、候选告警、冲突数和实际 memory 写入数。它用于区分“真的没新信息”和“抓取/分析链路出问题”。
 
 ### 6. 索引、锁与原子写
 

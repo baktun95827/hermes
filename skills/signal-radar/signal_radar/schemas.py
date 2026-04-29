@@ -50,6 +50,59 @@ MEMORY_ACTIONS = {
 }
 ALERT_LEVELS = {"none", "watch", "important", "urgent"}
 CHANGED_SINCE_VALUES = {"last_memory", "recent_run", "unknown"}
+INFORMATION_EVENT_TYPES = {
+    "material_price_change",
+    "supply_disruption",
+    "company_order",
+    "geopolitical_update",
+    "policy_signal",
+    "macro_data",
+    "market_rumor",
+    "official_disclosure",
+    "market_price_action",
+    "fund_flow",
+    "earnings_update",
+    "industry_chain_signal",
+    "other",
+    "unknown",
+}
+RELATION_TO_MEMORY_VALUES = {
+    "new_event",
+    "event_update",
+    "confirmation",
+    "contradiction",
+    "repeat",
+    "noise",
+    "unknown",
+}
+CHANGED_DIMENSIONS = {
+    "price",
+    "supply",
+    "demand",
+    "orders",
+    "capacity",
+    "policy",
+    "risk_level",
+    "liquidity",
+    "rates",
+    "earnings",
+    "valuation",
+    "sentiment",
+    "positioning",
+    "timeline",
+    "official_status",
+    "market_expectation",
+    "other",
+}
+TIME_HORIZONS = {
+    "intraday",
+    "days",
+    "weeks",
+    "months",
+    "quarters",
+    "years",
+    "unknown",
+}
 CONFLICT_TYPES = {
     "source_conflict",
     "data_conflict",
@@ -260,6 +313,118 @@ def normalize_changed_since(value: Any) -> str:
     }
     changed_since = aliases.get(changed_since, changed_since)
     return changed_since if changed_since in CHANGED_SINCE_VALUES else "unknown"
+
+
+def normalize_information_event_type(value: Any) -> str:
+    event_type = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "material_price": "material_price_change",
+        "raw_material_price": "material_price_change",
+        "commodity_price": "material_price_change",
+        "price_change": "material_price_change",
+        "mine_shutdown": "supply_disruption",
+        "production_halt": "supply_disruption",
+        "factory_shutdown": "supply_disruption",
+        "supply_cut": "supply_disruption",
+        "order": "company_order",
+        "contract": "company_order",
+        "customer_order": "company_order",
+        "geopolitics": "geopolitical_update",
+        "war": "geopolitical_update",
+        "conflict": "geopolitical_update",
+        "tweet": "policy_signal",
+        "trump_tweet": "policy_signal",
+        "fed": "policy_signal",
+        "fomc": "policy_signal",
+        "policy": "policy_signal",
+        "data": "macro_data",
+        "economic_data": "macro_data",
+        "rumor": "market_rumor",
+        "official": "official_disclosure",
+        "announcement": "official_disclosure",
+        "price_action": "market_price_action",
+        "flow": "fund_flow",
+        "earnings": "earnings_update",
+        "industry_chain": "industry_chain_signal",
+        "supply_chain": "industry_chain_signal",
+    }
+    event_type = aliases.get(event_type, event_type)
+    return event_type if event_type in INFORMATION_EVENT_TYPES else "unknown"
+
+
+def normalize_relation_to_memory(value: Any) -> str:
+    relation = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "new": "new_event",
+        "new_fact": "new_event",
+        "new_angle": "new_event",
+        "update": "event_update",
+        "same_event_update": "event_update",
+        "follow_up": "event_update",
+        "confirm": "confirmation",
+        "confirmed": "confirmation",
+        "conflict": "contradiction",
+        "source_conflict": "contradiction",
+        "duplicate": "repeat",
+        "duplicated": "repeat",
+        "low_value": "noise",
+    }
+    relation = aliases.get(relation, relation)
+    return relation if relation in RELATION_TO_MEMORY_VALUES else "unknown"
+
+
+def normalize_changed_dimension(value: Any) -> str:
+    dimension = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "material_price": "price",
+        "commodity_price": "price",
+        "raw_material_price": "price",
+        "supply_cut": "supply",
+        "production": "capacity",
+        "production_capacity": "capacity",
+        "order": "orders",
+        "contract": "orders",
+        "fed_rate": "rates",
+        "interest_rate": "rates",
+        "risk": "risk_level",
+        "geopolitical_risk": "risk_level",
+        "expectation": "market_expectation",
+        "official": "official_status",
+    }
+    dimension = aliases.get(dimension, dimension)
+    if dimension in CHANGED_DIMENSIONS:
+        return dimension
+    return dimension if dimension else ""
+
+
+def normalize_changed_dimensions(value: Any) -> list[str]:
+    return unique_preserving_order(
+        [
+            dimension
+            for dimension in (
+                normalize_changed_dimension(item) for item in coerce_string_list(value)
+            )
+            if dimension
+        ]
+    )
+
+
+def normalize_time_horizon(value: Any) -> str:
+    horizon = clean_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "day": "days",
+        "daily": "days",
+        "week": "weeks",
+        "weekly": "weeks",
+        "month": "months",
+        "monthly": "months",
+        "quarter": "quarters",
+        "quarterly": "quarters",
+        "year": "years",
+        "yearly": "years",
+    }
+    horizon = aliases.get(horizon, horizon)
+    return horizon if horizon in TIME_HORIZONS else "unknown"
 
 
 def normalize_conflict_type(value: Any) -> str:
@@ -495,9 +660,15 @@ def source_topic_from_update(update: dict[str, Any]) -> str:
         topic = clean_text(update.get(key))
         if topic:
             return topic
+    affected_themes = coerce_string_list(update.get("affected_themes"))
+    if affected_themes:
+        return affected_themes[0]
     related_entities = coerce_string_list(update.get("related_entity_ids"))
     if related_entities:
         return related_entities[0]
+    affected_entities = coerce_string_list(update.get("affected_entities"))
+    if affected_entities:
+        return affected_entities[0]
     entity_id = clean_text(update.get("entity_id") or update.get("symbol"))
     if entity_id:
         return entity_id
@@ -518,8 +689,13 @@ def stable_source_observation_id(
         "update_id": update_id,
         "observation_kind": observation_kind,
         "source_id": source_id,
+        "information_unit_id": clean_text(
+            update.get("information_unit_id") or update.get("unit_id")
+        ),
         "cluster_id": clean_text(update.get("cluster_id")),
         "claim_id": clean_text(update.get("claim_id") or update.get("id")),
+        "event_type": clean_text(update.get("event_type")),
+        "subject": clean_text(update.get("subject")),
         "title": clean_text(update.get("title")),
         "claim": clean_text(
             update.get("claim") or update.get("summary") or update.get("observation")
@@ -608,6 +784,32 @@ def stable_event_cluster_id(update: dict[str, Any]) -> str:
         json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     return f"xcluster:{digest[:16]}"
+
+
+def stable_information_unit_id(update: dict[str, Any]) -> str:
+    raw_id = clean_text(
+        update.get("information_unit_id") or update.get("unit_id") or update.get("id")
+    )
+    if raw_id:
+        return raw_id
+
+    identity = {
+        "event_type": clean_text(update.get("event_type") or update.get("type")),
+        "relation_to_memory": clean_text(
+            update.get("relation_to_memory") or update.get("relation")
+        ),
+        "subject": clean_text(update.get("subject") or update.get("target")),
+        "claim": clean_text(
+            update.get("claim") or update.get("summary") or update.get("observation")
+        ),
+        "what_changed": clean_text(update.get("what_changed")),
+        "source_ids": coerce_string_list(update.get("source_ids")),
+        "evidence_item_ids": coerce_string_list(update.get("evidence_item_ids")),
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+    return f"info:{digest[:16]}"
 
 
 def stable_thesis_id(
