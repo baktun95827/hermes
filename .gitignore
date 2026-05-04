@@ -34,3 +34,9 @@ channel_directory.json
 
 
 __pycache__/
+
+# Product-mode local runtime data
+/data/*
+!/data/.gitignore
+!/data/README.md
+/apps/signal-radar-web/.env

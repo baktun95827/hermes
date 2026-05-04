@@ -23,6 +23,7 @@ collect -> build-analysis-input -> analyzer -> apply-memory
 - 记忆模型已经从宽泛主题扩展为 claim-driven memory，可维护标的、事件、宏观、来源评价和疑似冲突
 - `MEMORY_UPDATE` 现在也承载价值判断和 diff：`information_units`、`event_clusters`、`signal_evaluation`、`cluster_id`、`what_changed`、`contradictions`、`alert_candidates`
 - 每轮会生成 `run_metrics_<run_id>.json`，先记录抓取健康指标，再由 `build-analysis-input` 回填输入构建指标，最后由 `apply-memory` 回填信息单元、事件簇和 memory 写入指标
+- repo 根目录已经加入产品化骨架：`apps/`、`services/`、`packages/`、`integrations/`、`data/`；当前 active skill 仍在 `skills/signal-radar/`，迁移边界见 `PRODUCT_STRUCTURE.md`
 
 ## 当前最重要的文件
 
@@ -111,6 +112,9 @@ python3 skills/signal-radar/monitor.py build-analysis-input --config skills/sign
 - 不要把 analyzer 重新耦合回浏览器流程
 - 不要让 `collect` 重新读取长期 memory 或生成 prompt；这属于 `build-analysis-input`
 - 如果只是要接新 source，优先补 `collectors/<source>/source.yaml` 和标准化输出，不要先改摘要层
+- 如果要做 Web/API，放到 `apps/signal-radar-web/`，不要放进 skill 目录
+- 如果要做长期 worker / provider 调度，放到 `services/signal-radar-worker/`，不要让 Web 直接拿 Hermes/Codex 登录态
+- 如果要抽复用逻辑，放到 `packages/signal-radar-core/`，不要在 Web、worker、Hermes 三处复制 schema 和 memory 逻辑
 
 ## 一句话总结
 

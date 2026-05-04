@@ -30,6 +30,20 @@ collector -> analysis input -> local store -> analyzer -> digest / alerts
 - `monitor.py apply-memory`
   - 负责把 analyzer 的 `MEMORY_UPDATE` 安全提交到当前 memory backend
 
+## 产品目录边界
+
+当前 repo 仍然是 Hermes skills 仓库，但 `signal-radar` 的目标形态已经不是单一 Hermes skill。产品化目录边界见 repo 根目录的 `PRODUCT_STRUCTURE.md`。
+
+过渡期约定：
+
+- `skills/signal-radar/` 仍是当前可运行 Hermes skill
+- `packages/signal-radar-core/` 是未来 runtime-neutral 核心逻辑位置
+- `apps/signal-radar-web/` 是未来 Web/API 输入入口
+- `services/signal-radar-worker/` 是未来队列和 analyzer 执行位置
+- `integrations/hermes/` 是未来 Hermes 适配层位置
+
+不要把 Web/API、调度队列、用户输入、provider 鉴权、Hermes session 和长期 memory 真源塞进 Hermes skill 目录。Hermes 可以继续作为 analyzer worker，但核心契约必须能被 Web、worker 和其他 provider 复用。
+
 ## 为什么要分层
 
 因为这些问题的失败模式完全不同：
