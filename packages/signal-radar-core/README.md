@@ -18,7 +18,11 @@ Current state:
 skills/signal-radar/signal_radar/
 ```
 
-still contains the active Hermes implementation. The current MVP has copied runtime-neutral modules into `src/signal_radar_core/` so Web and worker can start depending on core instead of depending on Hermes. Continue extracting gradually; do not copy large logic into Web or worker directly.
+still contains the legacy Hermes skill CLI and crawler-facing implementation. The
+current MVP has copied runtime-neutral modules into `src/signal_radar_core/`, and
+the product Web/API and worker now build analysis input and apply memory through
+core instead of the skill monitor. Continue extracting gradually; do not copy
+large logic into Web or worker directly.
 
 Currently included:
 
@@ -28,6 +32,9 @@ Currently included:
 - `memory_store.py`
 - `audit.py`
 - `manual_ingest.py`
+- `analysis_input.py` for native collector batch -> analysis input/prompt/report builds
+- `memory_application.py` for native `MEMORY_UPDATE` application into `MemoryStore` and audit files
+- `pipeline.py` as a small compatibility facade for worker logging/status semantics
 
 Rules for this package:
 
@@ -36,3 +43,7 @@ Rules for this package:
 - no Web framework dependency
 - no provider-specific LLM code
 - deterministic functions should be testable without network or credentials
+
+The product path should not import or shell out to `skills/signal-radar/monitor.py`.
+That file remains available for the legacy Hermes skill CLI, but Web/API and worker
+code should call core modules directly.

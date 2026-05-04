@@ -48,4 +48,4 @@ The worker writes:
 - job state under `data/jobs/<job_id>/`
 - `collector_batch_<job_id>.json` under the configured report directory
 - `analysis_input`, `prompt`, `summary`, `memory_update`, `run_metrics`
-- memory audit records through the existing `apply-memory` path
+- memory audit records through `signal_radar_core.memory_application`

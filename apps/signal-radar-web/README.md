@@ -47,6 +47,23 @@ Then open:
 http://127.0.0.1:8765
 ```
 
+JSON API:
+
+```bash
+curl -sS http://127.0.0.1:8765/api/healthz
+
+curl -sS -X POST http://127.0.0.1:8765/api/ingest-text \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "title": "英维克液冷讨论",
+    "text": "英维克液冷业务被市场重新讨论，但需要公告或订单验证。",
+    "user_label": "user_note",
+    "requires_verification": true
+  }'
+
+curl -sS http://127.0.0.1:8765/api/jobs/<job_id>
+```
+
 Environment variables:
 
 - `XRADAR_CONFIG`: config path, defaults to `skills/signal-radar/config.yaml`

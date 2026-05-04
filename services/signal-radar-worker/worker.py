@@ -27,11 +27,15 @@ from signal_radar_core.manual_ingest import (  # noqa: E402
     timestamp_slug,
     write_manual_collector_batch,
 )
+from signal_radar_core.pipeline import (  # noqa: E402
+    PipelineError,
+    apply_memory as pipeline_apply_memory,
+    build_analysis_input as pipeline_build_analysis_input,
+)
 
 
 DEFAULT_CONFIG = REPO_ROOT / "skills" / "signal-radar" / "config.yaml"
 DEFAULT_JOBS_DIR = REPO_ROOT / "data" / "jobs"
-MONITOR = REPO_ROOT / "skills" / "signal-radar" / "monitor.py"
 
 
 def utc_now_iso() -> str:
@@ -83,6 +87,14 @@ def run_command(job_dir: Path, command: list[str], *, input_text: str | None = N
         raise RuntimeError(
             f"command failed with exit code {result.returncode}: {' '.join(command)}"
         )
+
+
+def log_pipeline_result(job_dir: Path, action: str, stdout: str, stderr: str) -> None:
+    append_log(job_dir, f"$ core.pipeline {action}")
+    if stdout:
+        append_log(job_dir, stdout)
+    if stderr:
+        append_log(job_dir, stderr)
 
 
 def create_manual_job(
@@ -301,17 +313,15 @@ def run_job(job_dir: str, *, provider_name: str, model: str, apply_memory: bool 
         paths = artifact_paths_for_job(job_input)
         collector_batch_path = Path(job_input["collector_batch_path"])
         collector_batch = read_json_file(collector_batch_path, {})
-        run_command(
+        build_result = pipeline_build_analysis_input(
+            config_path=job_input["config_path"],
+            collector_batch_path=collector_batch_path,
+        )
+        log_pipeline_result(
             job_path,
-            [
-                sys.executable,
-                str(MONITOR),
-                "build-analysis-input",
-                "--config",
-                job_input["config_path"],
-                "--collector-batch",
-                str(collector_batch_path),
-            ],
+            "build-analysis-input",
+            build_result.stdout,
+            build_result.stderr,
         )
 
         prompt_path = paths["prompt"]
@@ -327,17 +337,15 @@ def run_job(job_dir: str, *, provider_name: str, model: str, apply_memory: bool 
         )
 
         if apply_memory:
-            run_command(
+            apply_result = pipeline_apply_memory(
+                config_path=job_input["config_path"],
+                summary_path=summary_path,
+            )
+            log_pipeline_result(
                 job_path,
-                [
-                    sys.executable,
-                    str(MONITOR),
-                    "apply-memory",
-                    "--config",
-                    job_input["config_path"],
-                    "--summary-file",
-                    str(summary_path),
-                ],
+                "apply-memory",
+                apply_result.stdout,
+                apply_result.stderr,
             )
 
         final_paths = {
@@ -365,6 +373,21 @@ def run_job(job_dir: str, *, provider_name: str, model: str, apply_memory: bool 
         )
         print(json.dumps(read_status(job_path), ensure_ascii=False, indent=2))
         return 0
+    except PipelineError as exc:
+        log_pipeline_result(job_path, "failed", exc.result.stdout, exc.result.stderr)
+        current = read_status(job_path)
+        write_status(
+            job_path,
+            {
+                **current,
+                "status": "failed",
+                "failed_at": utc_now_iso(),
+                "error": str(exc),
+            },
+        )
+        append_log(job_path, f"ERROR: {exc}")
+        print(json.dumps(read_status(job_path), ensure_ascii=False, indent=2))
+        return 1
     except Exception as exc:
         current = read_status(job_path)
         write_status(

@@ -37,6 +37,69 @@ def read_json(path: Path) -> dict:
         return {}
 
 
+def read_text_if_exists(path: Path, limit: int | None = None) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8")
+    return text[-limit:] if limit else text
+
+
+def dispatch_job(job_dir: Path) -> None:
+    log_file = (job_dir / "web-dispatch.log").open("ab")
+    try:
+        subprocess.Popen(
+            [
+                sys.executable,
+                str(WORKER),
+                "run-job",
+                "--job-dir",
+                str(job_dir),
+                "--provider",
+                PROVIDER,
+                "--model",
+                MODEL,
+            ],
+            cwd=str(REPO_ROOT),
+            stdout=log_file,
+            stderr=log_file,
+            close_fds=True,
+        )
+    finally:
+        log_file.close()
+
+
+def create_web_job(payload: dict) -> Path:
+    text = str(payload.get("text") or "").strip()
+    if not text:
+        raise ValueError("text is required")
+    return create_manual_job(
+        text=text,
+        config_path=CONFIG_PATH,
+        jobs_dir=JOBS_DIR,
+        title=str(payload.get("title") or "").strip() or None,
+        url=str(payload.get("url") or "").strip() or None,
+        user_label=str(payload.get("user_label") or "user_note").strip() or "user_note",
+        input_channel="web",
+        content_type=str(payload.get("content_type") or "note").strip() or "note",
+        requires_verification=bool(payload.get("requires_verification")),
+    )
+
+
+def job_payload(job_id: str) -> dict:
+    job_dir = Path(JOBS_DIR).expanduser().resolve() / job_id
+    status = read_json(job_dir / "status.json")
+    if not status:
+        return {}
+    summary_path = Path(status.get("paths", {}).get("summary", job_dir / "summary.txt"))
+    log_path = Path(status.get("paths", {}).get("worker_log", job_dir / "worker.log"))
+    return {
+        "job_id": job_id,
+        "status": status,
+        "summary": read_text_if_exists(summary_path),
+        "log_tail": read_text_if_exists(log_path, limit=8000),
+    }
+
+
 def html_page(title: str, body: str) -> bytes:
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -182,9 +245,34 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def send_json(self, payload: dict, status: int = HTTPStatus.OK) -> None:
+        data = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def read_request_payload(self) -> dict:
+        length = int(self.headers.get("Content-Length") or "0")
+        raw_body = self.rfile.read(length).decode("utf-8")
+        content_type = self.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            loaded = json.loads(raw_body or "{}")
+            return loaded if isinstance(loaded, dict) else {}
+        fields = parse_qs(raw_body)
+        return {
+            "text": (fields.get("text") or [""])[0],
+            "title": (fields.get("title") or [None])[0],
+            "url": (fields.get("url") or [None])[0],
+            "user_label": (fields.get("user_label") or ["user_note"])[0],
+            "content_type": (fields.get("content_type") or ["note"])[0],
+            "requires_verification": bool(fields.get("requires_verification")),
+        }
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/healthz":
+        if parsed.path in {"/healthz", "/api/healthz"}:
             payload = b"ok\n"
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -199,53 +287,45 @@ class Handler(BaseHTTPRequestHandler):
             job_id = parsed.path.removeprefix("/jobs/").strip("/")
             self.send_html(render_job(job_id))
             return
+        if parsed.path.startswith("/api/jobs/"):
+            job_id = parsed.path.removeprefix("/api/jobs/").strip("/")
+            payload = job_payload(job_id)
+            if not payload:
+                self.send_json({"error": "job not found", "job_id": job_id}, HTTPStatus.NOT_FOUND)
+                return
+            self.send_json(payload)
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path != "/ingest-text":
+        if parsed.path not in {"/ingest-text", "/api/ingest-text"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        length = int(self.headers.get("Content-Length") or "0")
-        raw_body = self.rfile.read(length).decode("utf-8")
-        fields = parse_qs(raw_body)
-        text = (fields.get("text") or [""])[0].strip()
-        if not text:
-            self.send_html(html_page("Missing Text", "<h1>Missing text</h1>"), HTTPStatus.BAD_REQUEST)
-            return
-        job_dir = create_manual_job(
-            text=text,
-            config_path=CONFIG_PATH,
-            jobs_dir=JOBS_DIR,
-            title=(fields.get("title") or [None])[0] or None,
-            url=(fields.get("url") or [None])[0] or None,
-            user_label=(fields.get("user_label") or ["user_note"])[0] or "user_note",
-            input_channel="web",
-            content_type="note",
-            requires_verification=bool(fields.get("requires_verification")),
-        )
-        log_file = (job_dir / "web-dispatch.log").open("ab")
         try:
-            subprocess.Popen(
-                [
-                    sys.executable,
-                    str(WORKER),
-                    "run-job",
-                    "--job-dir",
-                    str(job_dir),
-                    "--provider",
-                    PROVIDER,
-                    "--model",
-                    MODEL,
-                ],
-                cwd=str(REPO_ROOT),
-                stdout=log_file,
-                stderr=log_file,
-                close_fds=True,
-            )
-        finally:
-            log_file.close()
+            request_payload = self.read_request_payload()
+            job_dir = create_web_job(request_payload)
+            dispatch_job(job_dir)
+        except Exception as exc:
+            if parsed.path.startswith("/api/"):
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            else:
+                body = f"<h1>Invalid request</h1><pre>{html.escape(str(exc))}</pre>"
+                self.send_html(html_page("Invalid Request", body), HTTPStatus.BAD_REQUEST)
+            return
         job_id = job_dir.name
+        if parsed.path.startswith("/api/"):
+            self.send_json(
+                {
+                    "job_id": job_id,
+                    "status_url": f"/api/jobs/{job_id}",
+                    "html_url": f"/jobs/{job_id}",
+                    "provider": PROVIDER,
+                    "model": MODEL,
+                },
+                HTTPStatus.ACCEPTED,
+            )
+            return
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", f"/jobs/{job_id}")
         self.end_headers()
