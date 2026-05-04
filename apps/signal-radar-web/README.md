@@ -32,3 +32,30 @@ manual text
 -> MemoryBackend commit
 -> audit/result shown in Web
 ```
+
+## Current MVP
+
+Run locally:
+
+```bash
+python3 apps/signal-radar-web/server.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765
+```
+
+Environment variables:
+
+- `XRADAR_CONFIG`: config path, defaults to `skills/signal-radar/config.yaml`
+- `XRADAR_JOBS_DIR`: jobs directory, defaults to `data/jobs`
+- `XRADAR_ANALYZER_PROVIDER`: `fixture` or `codex-cli`, defaults to `fixture`
+- `XRADAR_CODEX_MODEL`: Codex model, defaults to `gpt-5.4`
+
+Use `fixture` for smoke tests. Use `codex-cli` only when you intend to call Codex:
+
+```bash
+XRADAR_ANALYZER_PROVIDER=codex-cli python3 apps/signal-radar-web/server.py
+```

@@ -1,6 +1,6 @@
 # Signal Radar Product Structure
 
-This repository is currently a Hermes skills repository. `signal-radar` is evolving from a Hermes skill into a product-oriented market intelligence system, so the repo now keeps a transitional product skeleton.
+This repository is currently a Hermes skills repository. `signal-radar` is evolving from a Hermes skill into a product-oriented market intelligence system, so the repo now keeps a product-first skeleton next to the existing Hermes skill.
 
 ## Target Layout
 
@@ -26,7 +26,17 @@ data/
 
 ## Current Boundary
 
-`skills/signal-radar` remains the active, runnable Hermes skill today. Do not move it until `packages/signal-radar-core` owns the stable contracts and reusable logic.
+The product mainline is now:
+
+```text
+apps/signal-radar-web
+-> services/signal-radar-worker
+-> packages/signal-radar-core
+-> CodexCliProvider or fixture provider
+-> existing apply-memory compatibility path
+```
+
+`skills/signal-radar` remains the active, runnable Hermes skill and compatibility CLI, but new product work should not be built inside the skill directory.
 
 The durable contracts are:
 
@@ -41,10 +51,12 @@ New product code should depend on these contracts, not on Hermes sessions, Herme
 ## Migration Sequence
 
 1. Keep `skills/signal-radar` working as the compatibility Hermes entrypoint.
-2. Extract runtime-neutral modules from `skills/signal-radar/signal_radar` into `packages/signal-radar-core`.
-3. Add Web/API ingestion under `apps/signal-radar-web`; it should create jobs or collector batches, not mutate memory directly.
-4. Add background execution under `services/signal-radar-worker`; it may call Hermes or Codex as an analyzer provider.
-5. Once the core package is stable, move the Hermes adapter to `integrations/hermes/skills/signal-radar` and keep it thin.
+2. Keep runtime-neutral modules in `packages/signal-radar-core` and continue moving shared logic there.
+3. Use `apps/signal-radar-web` for manual input and future UI/API work.
+4. Use `services/signal-radar-worker` for jobs, analyzer provider calls, memory apply, and audit.
+5. Prefer `CodexCliProvider` for the product worker when using the Codex subscription.
+6. Keep Hermes as an optional integration and debugging path, not the default product runtime.
+7. Once the core package is stable, move the Hermes adapter to `integrations/hermes/skills/signal-radar` and keep it thin.
 
 ## Deployment Shape
 
@@ -63,3 +75,9 @@ ln -s /opt/xradar/integrations/hermes/skills/signal-radar \
 ```
 
 Do not commit or mount Hermes/Codex OAuth state into the Web app. The worker host may use logged-in Hermes/Codex locally, but Web/API should talk to the worker through jobs and structured results.
+
+For the current MVP, direct Codex CLI execution is the preferred product path:
+
+```bash
+XRADAR_ANALYZER_PROVIDER=codex-cli python3 apps/signal-radar-web/server.py
+```

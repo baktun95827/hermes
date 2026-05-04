@@ -18,7 +18,16 @@ Current state:
 skills/signal-radar/signal_radar/
 ```
 
-still contains the active implementation. Extract into this package gradually; do not copy large logic into Web or worker directly.
+still contains the active Hermes implementation. The current MVP has copied runtime-neutral modules into `src/signal_radar_core/` so Web and worker can start depending on core instead of depending on Hermes. Continue extracting gradually; do not copy large logic into Web or worker directly.
+
+Currently included:
+
+- `schemas.py`
+- `config.py`
+- `memory_update.py`
+- `memory_store.py`
+- `audit.py`
+- `manual_ingest.py`
 
 Rules for this package:
 

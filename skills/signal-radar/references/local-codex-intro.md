@@ -23,7 +23,7 @@ collect -> build-analysis-input -> analyzer -> apply-memory
 - 记忆模型已经从宽泛主题扩展为 claim-driven memory，可维护标的、事件、宏观、来源评价和疑似冲突
 - `MEMORY_UPDATE` 现在也承载价值判断和 diff：`information_units`、`event_clusters`、`signal_evaluation`、`cluster_id`、`what_changed`、`contradictions`、`alert_candidates`
 - 每轮会生成 `run_metrics_<run_id>.json`，先记录抓取健康指标，再由 `build-analysis-input` 回填输入构建指标，最后由 `apply-memory` 回填信息单元、事件簇和 memory 写入指标
-- repo 根目录已经加入产品化骨架：`apps/`、`services/`、`packages/`、`integrations/`、`data/`；当前 active skill 仍在 `skills/signal-radar/`，迁移边界见 `PRODUCT_STRUCTURE.md`
+- repo 根目录已经加入产品化主线：`apps/`、`services/`、`packages/`、`integrations/`、`data/`；当前 active skill 仍在 `skills/signal-radar/`，但 Web/worker 新代码应走 `PRODUCT_STRUCTURE.md` 里的产品路径
 
 ## 当前最重要的文件
 
@@ -69,6 +69,24 @@ python3 -m playwright install chromium --with-deps
 python3 -m py_compile skills/signal-radar/monitor.py skills/signal-radar/signal_radar/*.py
 python3 skills/signal-radar/monitor.py collect --config skills/signal-radar/config.yaml
 python3 skills/signal-radar/monitor.py build-analysis-input --config skills/signal-radar/config.yaml
+```
+
+如果本地要验证产品主线和手动输入，不需要跑 Hermes：
+
+```bash
+python3 services/signal-radar-worker/worker.py ingest-text \
+  --text "英维克液冷业务被市场重新讨论，但需要公告或订单验证。" \
+  --config skills/signal-radar/config.yaml \
+  --run \
+  --provider fixture
+
+python3 apps/signal-radar-web/server.py
+```
+
+真实调用 Codex 时再显式使用：
+
+```bash
+XRADAR_ANALYZER_PROVIDER=codex-cli python3 apps/signal-radar-web/server.py
 ```
 
 前提：

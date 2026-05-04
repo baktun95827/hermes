@@ -42,7 +42,17 @@ collector -> analysis input -> local store -> analyzer -> digest / alerts
 - `services/signal-radar-worker/` 是未来队列和 analyzer 执行位置
 - `integrations/hermes/` 是未来 Hermes 适配层位置
 
-不要把 Web/API、调度队列、用户输入、provider 鉴权、Hermes session 和长期 memory 真源塞进 Hermes skill 目录。Hermes 可以继续作为 analyzer worker，但核心契约必须能被 Web、worker 和其他 provider 复用。
+现在产品主线已经切到：
+
+```text
+apps/signal-radar-web
+-> services/signal-radar-worker
+-> packages/signal-radar-core
+-> CodexCliProvider / fixture provider
+-> apply-memory
+```
+
+不要把 Web/API、调度队列、用户输入、provider 鉴权、Hermes session 和长期 memory 真源塞进 Hermes skill 目录。Hermes 可以继续作为兼容入口或调试路径，但核心契约必须能被 Web、worker 和其他 provider 复用。
 
 ## 为什么要分层
 
