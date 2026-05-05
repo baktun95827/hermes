@@ -9,7 +9,7 @@ import sys
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -17,7 +17,13 @@ WORKER_DIR = REPO_ROOT / "services" / "signal-radar-worker"
 if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
-from worker import DEFAULT_CONFIG, DEFAULT_JOBS_DIR, create_manual_job  # noqa: E402
+from worker import (  # noqa: E402
+    DEFAULT_CONFIG,
+    DEFAULT_JOBS_DIR,
+    create_manual_job,
+    resolve_job_dir,
+    validate_job_id,
+)
 
 
 WORKER = WORKER_DIR / "worker.py"
@@ -37,11 +43,50 @@ def read_json(path: Path) -> dict:
         return {}
 
 
+def read_json_path(path_text: str | None) -> dict:
+    return read_json(Path(path_text)) if path_text else {}
+
+
 def read_text_if_exists(path: Path, limit: int | None = None) -> str:
     if not path.exists():
         return ""
     text = path.read_text(encoding="utf-8")
     return text[-limit:] if limit else text
+
+
+def summarize_changed_files(changed_files: object) -> list[dict[str, str]]:
+    if not isinstance(changed_files, list):
+        return []
+    summary: list[dict[str, str]] = []
+    for item in changed_files:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        action = str(item.get("action") or "").strip()
+        if path:
+            summary.append({"path": path, "action": action})
+    return summary
+
+
+def audit_status_from_path(path: str) -> dict:
+    if not path:
+        return {"path": "", "exists": False}
+    audit_path = Path(path)
+    payload = read_json(audit_path)
+    result = {"path": str(audit_path), "exists": audit_path.exists()}
+    if payload:
+        result.update(
+            {
+                "status": payload.get("status"),
+                "changed_file_count": payload.get("changed_file_count"),
+                "changed_files": summarize_changed_files(payload.get("changed_files")),
+            }
+        )
+    return result
+
+
+def path_job_id(raw_path: str, prefix: str) -> str:
+    return validate_job_id(unquote(raw_path.removeprefix(prefix)).strip("/"))
 
 
 def dispatch_job(job_dir: Path) -> None:
@@ -86,16 +131,26 @@ def create_web_job(payload: dict) -> Path:
 
 
 def job_payload(job_id: str) -> dict:
-    job_dir = Path(JOBS_DIR).expanduser().resolve() / job_id
+    job_dir = resolve_job_dir(JOBS_DIR, job_id)
     status = read_json(job_dir / "status.json")
     if not status:
         return {}
     summary_path = Path(status.get("paths", {}).get("summary", job_dir / "summary.txt"))
     log_path = Path(status.get("paths", {}).get("worker_log", job_dir / "worker.log"))
+    memory_update_path_text = status.get("paths", {}).get("memory_update")
+    memory_update = read_json_path(memory_update_path_text)
+    audit_path = (
+        status.get("paths", {}).get("memory_audit")
+        or memory_update.get("memory_audit")
+        or status.get("memory_audit", {}).get("path")
+        or ""
+    )
     return {
         "job_id": job_id,
         "status": status,
         "summary": read_text_if_exists(summary_path),
+        "memory_update": memory_update,
+        "memory_audit": audit_status_from_path(str(audit_path)),
         "log_tail": read_text_if_exists(log_path, limit=8000),
     }
 
@@ -215,12 +270,24 @@ def render_index() -> bytes:
 
 
 def render_job(job_id: str) -> bytes:
-    job_dir = Path(JOBS_DIR).expanduser().resolve() / job_id
+    try:
+        job_dir = resolve_job_dir(JOBS_DIR, job_id)
+    except ValueError as exc:
+        return html_page("Invalid Job", f"<h1>Invalid job id</h1><pre>{html.escape(str(exc))}</pre>")
     status = read_json(job_dir / "status.json")
     if not status:
         return html_page("Job Not Found", f"<h1>Job not found</h1><p>{html.escape(job_id)}</p>")
     summary_path = Path(status.get("paths", {}).get("summary", job_dir / "summary.txt"))
     summary = summary_path.read_text(encoding="utf-8") if summary_path.exists() else ""
+    memory_update_path_text = status.get("paths", {}).get("memory_update")
+    memory_update = read_json_path(memory_update_path_text)
+    audit_path = (
+        status.get("paths", {}).get("memory_audit")
+        or memory_update.get("memory_audit")
+        or status.get("memory_audit", {}).get("path")
+        or ""
+    )
+    memory_audit = audit_status_from_path(str(audit_path))
     log_path = Path(status.get("paths", {}).get("worker_log", job_dir / "worker.log"))
     log_text = log_path.read_text(encoding="utf-8")[-8000:] if log_path.exists() else ""
     body = f"""
@@ -231,6 +298,10 @@ def render_job(job_id: str) -> bytes:
 <pre>{html.escape(json.dumps(status, ensure_ascii=False, indent=2))}</pre>
 <h2>Summary</h2>
 <pre>{html.escape(summary or "summary not ready")}</pre>
+<h2>Memory Update</h2>
+<pre>{html.escape(json.dumps(memory_update or status.get("memory_update") or {}, ensure_ascii=False, indent=2))}</pre>
+<h2>Memory Audit</h2>
+<pre>{html.escape(json.dumps(memory_audit or status.get("memory_audit") or {}, ensure_ascii=False, indent=2))}</pre>
 <h2>Worker Log</h2>
 <pre>{html.escape(log_text or "log not ready")}</pre>
 """
@@ -284,11 +355,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_html(render_index())
             return
         if parsed.path.startswith("/jobs/"):
-            job_id = parsed.path.removeprefix("/jobs/").strip("/")
+            try:
+                job_id = path_job_id(parsed.path, "/jobs/")
+            except ValueError as exc:
+                body = f"<h1>Invalid job id</h1><pre>{html.escape(str(exc))}</pre>"
+                self.send_html(html_page("Invalid Job", body), HTTPStatus.BAD_REQUEST)
+                return
             self.send_html(render_job(job_id))
             return
         if parsed.path.startswith("/api/jobs/"):
-            job_id = parsed.path.removeprefix("/api/jobs/").strip("/")
+            try:
+                job_id = path_job_id(parsed.path, "/api/jobs/")
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
             payload = job_payload(job_id)
             if not payload:
                 self.send_json({"error": "job not found", "job_id": job_id}, HTTPStatus.NOT_FOUND)

@@ -76,3 +76,7 @@ Use `fixture` for smoke tests. Use `codex-cli` only when you intend to call Code
 ```bash
 XRADAR_ANALYZER_PROVIDER=codex-cli python3 apps/signal-radar-web/server.py
 ```
+
+`GET /api/jobs/<job_id>` returns the job status, summary, parsed
+`memory_update`, and memory audit metadata. Invalid job IDs return `400`
+instead of resolving arbitrary paths under the jobs directory.

@@ -200,20 +200,49 @@ class DiscoveryEngine:
         ]
 
 
+def report_item_heading(item: dict[str, Any]) -> str:
+    source = clean_text(item.get("source")).lower()
+    if source == "manual":
+        return "--- MANUAL INPUT ---"
+    if source in {"x", "twitter"}:
+        return "--- X POST ---"
+    if source:
+        return f"--- {source.upper()} ITEM ---"
+    return "--- INPUT ITEM ---"
+
+
+def format_actor_label(value: str, source: str) -> str:
+    if not value:
+        return "unknown"
+    if source in {"x", "twitter"}:
+        return f"@{value}"
+    return value
+
+
 def format_raw_report(account_tweets: dict[str, list[dict[str, Any]]]) -> str:
     lines: list[str] = []
     all_tweets = [tweet for tweets in account_tweets.values() for tweet in tweets]
 
     if not all_tweets:
-        return "本次监控无新推文。"
+        return "本次输入无新材料。"
 
     all_tweets.sort(key=lambda item: item.get("created_at") or "", reverse=True)
 
     for tweet in all_tweets:
-        lines.append("--- TWEET ---")
-        lines.append(f"作者: @{tweet['author']}")
+        source = clean_text(tweet.get("source")).lower()
+        lines.append(report_item_heading(tweet))
+        lines.append(f"来源类型: {source or 'unknown'}")
+        if tweet.get("title"):
+            lines.append(f"标题: {tweet['title']}")
+        lines.append(f"作者/来源: {format_actor_label(tweet['author'], source)}")
         if tweet.get("source_account") and tweet["source_account"] != tweet["author"]:
-            lines.append(f"监控源: @{tweet['source_account']}")
+            lines.append(
+                f"采集源: {format_actor_label(tweet['source_account'], source)}"
+            )
+        if tweet.get("content_type"):
+            lines.append(f"内容类型: {tweet['content_type']}")
+        if tweet.get("requires_verification"):
+            lines.append("验证提示: 用户标记为需要额外验证")
         if tweet.get("created_at"):
             lines.append(f"时间: {tweet['created_at']}")
         if tweet.get("tweet_url"):
@@ -223,7 +252,7 @@ def format_raw_report(account_tweets: dict[str, list[dict[str, Any]]]) -> str:
         lines.append("正文:")
         lines.append(tweet["text"])
         if tweet.get("quoted_text"):
-            lines.append(f"引用推文: {tweet['quoted_text']}")
+            lines.append(f"引用/转述内容: {tweet['quoted_text']}")
         if tweet.get("images"):
             lines.append(f"图片: {', '.join(tweet['images'])}")
         if tweet.get("has_video"):
@@ -240,6 +269,26 @@ def format_raw_report(account_tweets: dict[str, list[dict[str, Any]]]) -> str:
         lines.append("")
 
     return "\n".join(lines)
+
+
+def report_title_for_collector(
+    collector_batch: dict[str, Any],
+    now_str: str,
+) -> str:
+    source = clean_text(collector_batch.get("source")).lower()
+    target = collector_batch.get("target") if isinstance(collector_batch.get("target"), dict) else {}
+    target_label = clean_text(target.get("display_name") or target.get("id"))
+    if source in {"x", "twitter"}:
+        label = "X 监控报告"
+    elif source == "manual":
+        label = "手动输入研究报告"
+    elif source:
+        label = f"{source} 输入研究报告"
+    else:
+        label = "Signal Radar 研究报告"
+    if target_label and source not in {"x", "twitter"}:
+        return f"{label} — {target_label} — {now_str}"
+    return f"{label} — {now_str}"
 
 
 def format_discovery_section(
@@ -335,6 +384,21 @@ def build_llm_prompt(
 8. 对金融标的、地缘事件、宏观趋势，先抽取 information_units，再决定是否合并为 event_clusters 或写入 entity/event/macro memory
 9. 重复、噪音或无新增价值的信息应该使用 `skip` 或不进入结构化更新
 10. `account_notes` 的 key 使用不带 `@` 的用户名
+
+## 手动输入处理
+1. `source=manual` 的材料是用户粘贴或手写的研究材料，不是已验证事实来源
+2. 不要因为材料来自用户就提高置信度；只有官方公告、多源交叉或原始链接支持时才能提高 `verification_status`
+3. 如果用户标记“需要额外验证”，相关 claim 默认从 `unverified` 和 `weak`/`single_source` 起步
+4. 简报正文可以提出验证路径，但 MEMORY_UPDATE 必须诚实记录当前证据状态
+
+## MEMORY_UPDATE 分类要求
+1. 每条值得记录的 claim 先写入 `information_units`
+2. 涉及公司、证券、商品、产业链或具体标的的变化，分类到 `entity_updates`
+3. 涉及订单、政策、冲突、事故、发布会、监管或其他可命名事项，分类到 `event_updates`
+4. 涉及利率、汇率、通胀、流动性、周期、产业景气或跨市场环境，分类到 `macro_updates`
+5. 涉及来源可信度、重复率、营销/情绪倾向、一手程度或确认要求，分类到 `source_assessments`
+6. 对 `information_units`、`event_clusters`、`entity_updates`、`event_updates`、`macro_updates`、`source_assessments`、`alert_candidates` 和 `contradictions`，都要尽量提供 `what_changed`、`verification_status`、`confidence`、`novelty_level`、`evidence_strength`、`memory_action`、`evidence_item_ids`、`source_ids`
+7. `memory_action=write` 或 `merge` 只用于确有新增研究价值的材料；需要保留但不写长期记忆的材料使用 `skip`
 {theme_hint}
 ## 历史上下文
 {history_context if history_context else "（首次运行，无历史数据）"}
@@ -376,6 +440,10 @@ def collector_item_to_report_tweet(item: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "id": clean_text(item.get("item_id")),
+        "source": clean_text(item.get("source")),
+        "title": clean_text(item.get("title")),
+        "content_type": clean_text(item.get("content_type")),
+        "requires_verification": bool(source_meta.get("requires_verification")),
         "text": clean_text(item.get("text")),
         "author": author,
         "source_account": source_account,
@@ -517,7 +585,8 @@ def build_analysis_input(
         )
 
     now_str = utc_now().strftime("%Y-%m-%d %H:%M UTC")
-    full_report = f"X 监控报告 — {now_str}\n\n{raw_report}\n{discovery_section}"
+    report_title = report_title_for_collector(collector_batch, now_str)
+    full_report = f"{report_title}\n\n{raw_report}\n{discovery_section}"
     analysis_input_payload = {
         "schema_version": "signal-radar-analysis-input/v1",
         "run_id": run_id,

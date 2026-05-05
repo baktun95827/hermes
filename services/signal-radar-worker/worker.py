@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -36,10 +38,35 @@ from signal_radar_core.pipeline import (  # noqa: E402
 
 DEFAULT_CONFIG = REPO_ROOT / "skills" / "signal-radar" / "config.yaml"
 DEFAULT_JOBS_DIR = REPO_ROOT / "data" / "jobs"
+JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$")
 
 
 def utc_now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def unique_manual_job_id() -> str:
+    return f"manual_{timestamp_slug()}_{uuid.uuid4().hex[:10]}"
+
+
+def validate_job_id(job_id: str) -> str:
+    normalized = str(job_id or "").strip()
+    if not JOB_ID_PATTERN.fullmatch(normalized):
+        raise ValueError(f"invalid job_id: {job_id}")
+    return normalized
+
+
+def resolve_job_dir(jobs_dir: str | Path, job_id: str) -> Path:
+    safe_job_id = validate_job_id(job_id)
+    root = Path(jobs_dir).expanduser().resolve()
+    candidate = (root / safe_job_id).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"job_id escapes jobs directory: {job_id}") from exc
+    if candidate.parent != root:
+        raise ValueError(f"job_id must name a direct child of jobs directory: {job_id}")
+    return candidate
 
 
 def read_text_arg(text: str | None, text_file: str | None) -> str:
@@ -109,9 +136,18 @@ def create_manual_job(
     content_type: str = "note",
     requires_verification: bool = False,
 ) -> Path:
-    job_id = f"manual_{timestamp_slug()}"
-    job_dir = Path(jobs_dir).expanduser().resolve() / job_id
-    job_dir.mkdir(parents=True, exist_ok=False)
+    root = Path(jobs_dir).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    for _ in range(20):
+        job_id = unique_manual_job_id()
+        job_dir = resolve_job_dir(root, job_id)
+        try:
+            job_dir.mkdir(parents=True, exist_ok=False)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise RuntimeError("failed to allocate a unique manual job_id")
 
     batch, batch_path = write_manual_collector_batch(
         config_path=config_path,
@@ -257,15 +293,14 @@ class CodexCliProvider(AnalyzerProvider):
             "Read the prompt below and return only the final Chinese brief followed by "
             "a strict `### MEMORY_UPDATE` JSON block.\n\n"
         )
+        codex_bin = os.environ.get("XRADAR_CODEX_BIN", "codex")
         command = [
-            "codex",
+            codex_bin,
             "exec",
             "--cd",
             str(REPO_ROOT),
             "--sandbox",
             "read-only",
-            "--ask-for-approval",
-            "never",
             "--ephemeral",
             "-m",
             model,
@@ -290,6 +325,83 @@ def get_provider(name: str) -> AnalyzerProvider:
 def artifact_paths_for_job(job_input: dict[str, Any]) -> dict[str, Path]:
     config = load_config(job_input["config_path"])
     return build_artifact_paths(Path(config["output_dir"]), job_input["job_id"])
+
+
+def summarize_changed_files(changed_files: Any) -> list[dict[str, str]]:
+    if not isinstance(changed_files, list):
+        return []
+    summary: list[dict[str, str]] = []
+    for item in changed_files:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        action = str(item.get("action") or "").strip()
+        if path:
+            summary.append({"path": path, "action": action})
+    return summary
+
+
+def memory_status_from_artifacts(
+    paths: dict[str, Path],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
+    memory_update_path = paths["memory_update"]
+    run_metrics_path = paths["run_metrics"]
+    memory_update = read_json_file(memory_update_path, {})
+    run_metrics = read_json_file(run_metrics_path, {})
+    memory_section = (
+        run_metrics.get("memory") if isinstance(run_metrics.get("memory"), dict) else {}
+    )
+    audit_path_text = str(
+        memory_update.get("memory_audit")
+        or memory_section.get("memory_audit")
+        or ""
+    )
+    final_paths = {
+        "memory_update": str(memory_update_path),
+        "run_metrics": str(run_metrics_path),
+    }
+    if audit_path_text:
+        final_paths["memory_audit"] = audit_path_text
+
+    memory_update_status = {
+        "path": str(memory_update_path),
+        "exists": memory_update_path.exists(),
+    }
+    if memory_update:
+        memory_update_status.update(
+            {
+                "update_id": memory_update.get("update_id"),
+                "already_applied": memory_update.get("already_applied"),
+                "memory_updates": memory_section.get("memory_updates"),
+                "information_unit_count": memory_update.get("information_unit_count"),
+                "event_cluster_count": memory_update.get("event_cluster_count"),
+                "entity_updates_applied": memory_update.get("entity_updates_applied"),
+                "event_updates_applied": memory_update.get("event_updates_applied"),
+                "macro_updates_applied": memory_update.get("macro_updates_applied"),
+                "source_updates_applied": memory_update.get("source_updates_applied"),
+                "source_observation_updates_applied": memory_update.get(
+                    "source_observation_updates_applied"
+                ),
+            }
+        )
+
+    memory_audit_status = {
+        "path": audit_path_text,
+        "exists": bool(audit_path_text and Path(audit_path_text).exists()),
+    }
+    audit_payload = read_json_file(Path(audit_path_text), {}) if audit_path_text else {}
+    if audit_payload:
+        memory_audit_status.update(
+            {
+                "status": audit_payload.get("status"),
+                "changed_file_count": audit_payload.get("changed_file_count"),
+                "changed_files": summarize_changed_files(
+                    audit_payload.get("changed_files")
+                ),
+            }
+        )
+
+    return memory_update_status, memory_audit_status, final_paths
 
 
 def run_job(job_dir: str, *, provider_name: str, model: str, apply_memory: bool = True) -> int:
@@ -353,11 +465,14 @@ def run_job(job_dir: str, *, provider_name: str, model: str, apply_memory: bool 
             "collector_batch": str(collector_batch_path),
             "analysis_input": str(paths["analysis_input"]),
             "prompt": str(prompt_path),
+            "report": str(paths["report"]),
             "summary": str(summary_path),
-            "memory_update": str(paths["memory_update"]),
-            "run_metrics": str(paths["run_metrics"]),
             "worker_log": str(job_path / "worker.log"),
         }
+        memory_update_status, memory_audit_status, memory_paths = memory_status_from_artifacts(
+            paths
+        )
+        final_paths.update(memory_paths)
         write_status(
             job_path,
             {
@@ -369,6 +484,8 @@ def run_job(job_dir: str, *, provider_name: str, model: str, apply_memory: bool 
                 "provider": provider.name,
                 "model": model,
                 "paths": final_paths,
+                "memory_update": memory_update_status,
+                "memory_audit": memory_audit_status,
             },
         )
         print(json.dumps(read_status(job_path), ensure_ascii=False, indent=2))

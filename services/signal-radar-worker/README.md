@@ -43,9 +43,19 @@ python3 services/signal-radar-worker/worker.py ingest-text \
   --model gpt-5.4
 ```
 
+For regression tests that should not call the external Codex service, set
+`XRADAR_CODEX_BIN` to a local shim that implements `codex exec
+--output-last-message <path>`.
+
 The worker writes:
 
 - job state under `data/jobs/<job_id>/`
 - `collector_batch_<job_id>.json` under the configured report directory
-- `analysis_input`, `prompt`, `summary`, `memory_update`, `run_metrics`
+- `analysis_input`, `prompt`, `report`, `summary`, `memory_update`, `run_metrics`
 - memory audit records through `signal_radar_core.memory_application`
+
+Run the local regression smoke checks against temp memory only:
+
+```bash
+python3 scripts/signal_radar_smoke.py
+```
