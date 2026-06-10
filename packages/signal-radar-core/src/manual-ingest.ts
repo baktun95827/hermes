@@ -94,6 +94,7 @@ export function buildManualCollectorBatch(options: {
   title?: string | null;
   url?: string | null;
   userLabel?: string | null;
+  targetCode?: string | null;
   inputChannel?: string;
   contentType?: string;
   requiresVerification?: boolean;
@@ -120,9 +121,10 @@ export function buildManualCollectorBatch(options: {
     collector_run_id: runId,
     collected_at: collectedAt,
     target: {
-      kind: "manual_input",
-      id: label,
-      display_name: label
+      kind: options.targetCode ? "public_market_code" : "manual_input",
+      id: options.targetCode ?? label,
+      code: options.targetCode ?? null,
+      display_name: options.targetCode ?? label
     },
     collector: {
       transport: MANUAL_COLLECTOR_TRANSPORT,
@@ -147,6 +149,7 @@ export async function writeManualCollectorBatch(options: {
   title?: string | null;
   url?: string | null;
   userLabel?: string | null;
+  targetCode?: string | null;
   inputChannel?: string;
   contentType?: string;
   requiresVerification?: boolean;
@@ -159,6 +162,7 @@ export async function writeManualCollectorBatch(options: {
     title: options.title,
     url: options.url,
     userLabel: options.userLabel,
+    targetCode: options.targetCode,
     inputChannel: options.inputChannel,
     contentType: options.contentType,
     requiresVerification: options.requiresVerification,

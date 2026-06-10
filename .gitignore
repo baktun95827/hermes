@@ -1,5 +1,6 @@
 # Local secrets and runtime state
 .env
+.env.local
 *.pid
 logs/
 cache/

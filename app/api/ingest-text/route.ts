@@ -11,6 +11,7 @@ export async function POST(request: Request) {
       title: cleanOptional(payload.title),
       url: cleanOptional(payload.url),
       userLabel: cleanOptional(payload.user_label) ?? "user_note",
+      targetCode: cleanOptional(payload.target_code),
       inputChannel: "web",
       contentType: cleanOptional(payload.content_type) ?? "note",
       requiresVerification: Boolean(payload.requires_verification),

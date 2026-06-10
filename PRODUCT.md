@@ -23,10 +23,30 @@ Success means the system can automatically maintain real-time memory at scale wh
 - Consumer product surface: target-centric pages with tabs for fundamentals, business segments, industry and supply-chain position, related concepts, key events, market consensus, source evidence, and current macro/policy context.
 - Admin surface first: ingestion, queue state, provider output, memory update, audit, logs, version history, and diff review. The current UI should be treated as this admin surface.
 - Agent automation first: thousands of targets cannot be maintained by manual approval. Agents should collect, analyze, update, and reconcile memory automatically, escalating low-confidence, contradictory, or high-impact changes.
-- Memory versioning: every memory write should be append-only, attributable, reversible, and inspectable with a Git-diff-like UI across historical versions.
+- Agent governance: memory is not manually edited by operators. Agents own writes, supersession, contradiction handling, and confidence changes. Operators inspect state, evidence, failures, and exceptions.
+- Memory versioning: every agent memory write should be append-only, attributable, and inspectable with a Git-diff-like UI across historical versions.
 - Data backend: move from local file artifacts to Postgres for targets, source items, jobs, memory snapshots, memory patches, audit events, provider runs, and version diffs.
 - Provider strategy: Codex CLI can be the temporary analyzer provider. The architecture should support Claude, GPT APIs, and future providers through narrow provider adapters.
 - Input strategy: start small by making the information processing and memory system correct, then expand collectors for URLs, feeds, filings, news, social sources, and market-specific data.
+- Evidence-first filtering: crawlers and manual inputs will produce noisy, duplicated, and promotional fragments. The product should retain durable evidence snapshots only for useful or potentially useful items, classify source credibility, and connect accepted evidence to memory changes.
+- Target model: a target can start as a simple public-market code. Rich tags, concepts, themes, industry-chain position, and business composition should be agent-managed memory rather than manual master-data CRUD.
+
+## Current Scope Decisions
+
+In scope now:
+
+- useful evidence snapshots and source identity
+- duplicate and low-value filtering markers
+- hard-evidence versus rumor/speculation classification
+- agent-written memory with diffable versions
+- a basic target read API that projects current memory, changes, evidence, and quality signals
+
+Out of scope for now:
+
+- crawler scheduling and target polling policy
+- manual memory editing, rollback, and operator CRUD
+- large target master-data management
+- golden evaluation fixtures for large-scale data validation
 
 ## Brand Personality
 
@@ -41,7 +61,7 @@ Avoid landing-page hero sections, oversized decorative cards, glass effects, cre
 - Put the active workflow first: input, run state, result, audit.
 - Keep contracts visible: show job IDs, provider, paths, and structured payloads.
 - Treat uncertainty as data: verification flags, skipped memory actions, weak evidence, and failures must stay inspectable.
-- Optimize admin flows for supervision and exception handling, not manual approval of every memory write.
+- Optimize admin flows for supervision and exception handling, not manual approval or manual editing of every memory write.
 - Optimize consumer flows around a target's live fundamental picture and how that picture changed.
 - Prefer dense but legible surfaces over promotional composition.
 - Keep runtime credentials and analyzer execution behind server-side code.

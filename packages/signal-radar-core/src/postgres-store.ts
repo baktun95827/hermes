@@ -1,7 +1,16 @@
 import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import {
+  classifyCollectorItem,
+  evidenceContentHash,
+  qualityGateFromEvidence,
+  sourceProfileFromCollectorItem,
+  textExcerpt,
+  type QualityGateDecision
+} from "./evidence";
 import { buildManualCollectorBatch, timestampSlug } from "./manual-ingest";
 import { getSharedPostgresPool, jsonb, withPostgresTransaction } from "./postgres";
+import { cleanText } from "./schemas";
 import type { CollectorBatch, CollectorItem, JobStatus, JsonValue } from "./types";
 
 export type EnqueueManualTextJobOptions = {
@@ -17,6 +26,10 @@ export type EnqueueManualTextJobOptions = {
   priority?: number;
   queueName?: string;
   targetId?: string | null;
+  targetCode?: string | null;
+  targetDisplayName?: string | null;
+  targetExchange?: string | null;
+  targetCountry?: string | null;
 };
 
 export type EnqueueManualTextJobResult = {
@@ -25,6 +38,7 @@ export type EnqueueManualTextJobResult = {
   status: "queued";
   provider: string;
   model: string;
+  target_id: string | null;
 };
 
 export type ClaimedPostgresJob = {
@@ -39,6 +53,65 @@ export type PostgresJobForRun = {
   model: string;
   target_id: string | null;
   collector_batch: CollectorBatch;
+};
+
+export type PostgresQueueStats = {
+  status: string;
+  count: number;
+};
+
+export type PostgresMemoryRecordListItem = {
+  memory_id: string;
+  collection: string;
+  record_key: string;
+  title: string | null;
+  current_version: number;
+  updated_at: string;
+  last_update_id: string | null;
+  preview: string;
+};
+
+export type PostgresMemoryVersionListItem = {
+  version_id: string;
+  version_number: number;
+  update_id: string;
+  job_id: string | null;
+  operation: string;
+  before_payload: JsonValue | null;
+  after_payload: JsonValue | null;
+  diff: JsonValue;
+  created_at: string;
+};
+
+export type PostgresMemoryRecordPayload = {
+  memory_id: string;
+  collection: string;
+  record_key: string;
+  title: string | null;
+  payload: JsonValue;
+  current_version: number;
+  updated_at: string;
+  last_update_id: string | null;
+  versions: PostgresMemoryVersionListItem[];
+};
+
+export type PostgresTargetReadProjection = {
+  code: string;
+  target: {
+    target_id: string;
+    namespace: string;
+    symbol: string;
+    exchange: string | null;
+    display_name: string;
+    asset_type: string;
+    country: string | null;
+    profile: JsonValue;
+    updated_at: string;
+  } | null;
+  memory: PostgresMemoryRecordListItem[];
+  latest_changes: JsonValue[];
+  evidence: JsonValue[];
+  quality_gates: JsonValue[];
 };
 
 type QueryTarget = Pool | PoolClient;
@@ -62,12 +135,24 @@ export async function enqueueManualTextJob(
     title: options.title,
     url: options.url,
     userLabel: options.userLabel,
+    targetCode: options.targetCode,
     inputChannel: options.inputChannel ?? "web",
     contentType: options.contentType ?? "note",
     requiresVerification: Boolean(options.requiresVerification)
   });
 
   return withPostgresTransaction(poolOrClient, async (client) => {
+    const targetId = options.targetId ?? (options.targetCode
+      ? await upsertPostgresTargetByCode(
+          {
+            code: options.targetCode,
+            displayName: options.targetDisplayName,
+            exchange: options.targetExchange,
+            country: options.targetCountry
+          },
+          client
+        )
+      : null);
     await client.query(
       `
       INSERT INTO signal_radar_jobs (
@@ -78,7 +163,7 @@ export async function enqueueManualTextJob(
       `,
       [
         jobId,
-        options.targetId ?? null,
+        targetId,
         options.title ?? null,
         options.url ?? null,
         options.userLabel ?? null,
@@ -91,7 +176,8 @@ export async function enqueueManualTextJob(
           text: options.text,
           title: options.title ?? null,
           url: options.url ?? null,
-          user_label: options.userLabel ?? null
+          user_label: options.userLabel ?? null,
+          target_code: options.targetCode ?? null
         })
       ]
     );
@@ -120,7 +206,7 @@ export async function enqueueManualTextJob(
       ]
     );
     const batchId = insertedBatch.rows[0].batch_id;
-    for (const item of batch.items) await insertCollectorItem(client, batchId, item);
+    for (const item of batch.items) await insertCollectorItem(client, batchId, item, { jobId, targetId });
 
     const queued = await client.query<{ queue_id: string }>(
       `
@@ -144,9 +230,82 @@ export async function enqueueManualTextJob(
       queue_id: queued.rows[0].queue_id,
       status: "queued",
       provider,
-      model
+      model,
+      target_id: targetId
     };
   });
+}
+
+export async function upsertPostgresTargetByCode(
+  options: {
+    code: string;
+    namespace?: string;
+    displayName?: string | null;
+    exchange?: string | null;
+    assetType?: string | null;
+    country?: string | null;
+    profile?: Record<string, JsonValue>;
+  },
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<string> {
+  const symbol = normalizeTargetCode(options.code);
+  if (!symbol) throw new Error("target code is required");
+  const namespace = cleanText(options.namespace) || "public_market";
+  const exchange = cleanOptional(options.exchange);
+  const displayName = cleanOptional(options.displayName) ?? symbol;
+  const assetType = cleanOptional(options.assetType) ?? "equity";
+
+  const existing = await queryable.query<{ target_id: string }>(
+    `
+    SELECT target_id::text
+    FROM signal_radar_targets
+    WHERE namespace = $1
+      AND symbol = $2
+      AND COALESCE(exchange, '') = COALESCE($3, '')
+    LIMIT 1
+    `,
+    [namespace, symbol, exchange]
+  );
+  if (existing.rows[0]) {
+    await queryable.query(
+      `
+      UPDATE signal_radar_targets
+      SET display_name = $2,
+          asset_type = $3,
+          country = COALESCE($4, country),
+          profile = profile || $5::jsonb
+      WHERE target_id = $1
+      `,
+      [
+        existing.rows[0].target_id,
+        displayName,
+        assetType,
+        cleanOptional(options.country),
+        jsonb(options.profile ?? {})
+      ]
+    );
+    return existing.rows[0].target_id;
+  }
+
+  const inserted = await queryable.query<{ target_id: string }>(
+    `
+    INSERT INTO signal_radar_targets (
+      namespace, symbol, exchange, display_name, asset_type, country, profile
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    RETURNING target_id::text
+    `,
+    [
+      namespace,
+      symbol,
+      exchange,
+      displayName,
+      assetType,
+      cleanOptional(options.country),
+      jsonb(options.profile ?? {})
+    ]
+  );
+  return inserted.rows[0].target_id;
 }
 
 export async function claimNextPostgresJob(
@@ -405,6 +564,7 @@ export async function failPostgresJob(
 
 export async function listRecentPostgresJobs(
   limit = 12,
+  filters: { status?: string | null } = {},
   queryable: QueryTarget = getSharedPostgresPool()
 ): Promise<JobStatus[]> {
   const rows = await queryable.query<{
@@ -422,10 +582,11 @@ export async function listRecentPostgresJobs(
     `
     SELECT job_id, status, created_at, started_at, finished_at, failed_at, updated_at, provider, model, error
     FROM signal_radar_jobs
+    WHERE ($2::text IS NULL OR status = $2)
     ORDER BY updated_at DESC
     LIMIT $1
     `,
-    [limit]
+    [limit, filters.status ?? null]
   );
   return rows.rows.map((row) => ({
     job_id: row.job_id,
@@ -439,6 +600,20 @@ export async function listRecentPostgresJobs(
     model: row.model ?? undefined,
     error: row.error ?? undefined
   }));
+}
+
+export async function getPostgresQueueStats(
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<PostgresQueueStats[]> {
+  const rows = await queryable.query<{ status: string; count: string }>(
+    `
+    SELECT status, count(*)::text AS count
+    FROM signal_radar_job_queue
+    GROUP BY status
+    ORDER BY status
+    `
+  );
+  return rows.rows.map((row) => ({ status: row.status, count: Number(row.count) }));
 }
 
 export async function getPostgresJobPayload(
@@ -501,6 +676,29 @@ export async function getPostgresJobPayload(
     `,
     [jobId]
   );
+  const evidence = await queryable.query<Record<string, JsonValue> & { created_at: Date | string; collected_at: Date | string; published_at: Date | string | null }>(
+    `
+    SELECT evidence_id, source_id, usefulness_status, evidence_kind, source_quality,
+           confidence, filter_reasons, url, title, published_at, collected_at,
+           text_excerpt, duplicate_of, created_at
+    FROM signal_radar_evidence_items
+    WHERE job_id = $1
+    ORDER BY created_at DESC
+    LIMIT 80
+    `,
+    [jobId]
+  );
+  const gates = await queryable.query<Record<string, JsonValue> & { created_at: Date | string }>(
+    `
+    SELECT gate_id::text, gate_type, subject, status, evidence_kind, evidence_strength,
+           verification_status, source_quality, severity, reason, evidence_id, update_id, created_at
+    FROM signal_radar_quality_gates
+    WHERE job_id = $1
+    ORDER BY created_at DESC
+    LIMIT 80
+    `,
+    [jobId]
+  );
 
   return {
     job_id: jobId,
@@ -508,7 +706,9 @@ export async function getPostgresJobPayload(
     summary: String(artifact.rows[0]?.summary ?? ""),
     memory_update: (memoryUpdate.rows[0] ?? {}) as JsonValue,
     memory_audit: {
-      memory_versions: versions.rows
+      memory_versions: versions.rows,
+      evidence_items: evidence.rows.map(normalizeDateRow),
+      quality_gates: gates.rows.map(normalizeDateRow)
     } as JsonValue,
     log_tail: logs.rows
       .reverse()
@@ -517,6 +717,127 @@ export async function getPostgresJobPayload(
         return `[${toIso(row.created_at)}] ${row.level} ${row.action}${body ? `\n${body}` : ""}`;
       })
       .join("\n")
+  };
+}
+
+export async function getPostgresTargetReadProjection(
+  code: string,
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<PostgresTargetReadProjection> {
+  const normalizedCode = normalizeTargetCode(code);
+  if (!normalizedCode) throw new Error("target code is required");
+
+  const target = await queryable.query<{
+    target_id: string;
+    namespace: string;
+    symbol: string;
+    exchange: string | null;
+    display_name: string;
+    asset_type: string;
+    country: string | null;
+    profile: JsonValue;
+    updated_at: Date | string;
+  }>(
+    `
+    SELECT target_id::text, namespace, symbol, exchange, display_name,
+           asset_type, country, profile, updated_at
+    FROM signal_radar_targets
+    WHERE lower(symbol) = lower($1) OR target_id::text = $1
+    ORDER BY updated_at DESC
+    LIMIT 1
+    `,
+    [normalizedCode]
+  );
+  const targetRow = target.rows[0];
+  if (!targetRow) {
+    return {
+      code: normalizedCode,
+      target: null,
+      memory: [],
+      latest_changes: [],
+      evidence: [],
+      quality_gates: []
+    };
+  }
+
+  const memory = await queryable.query<{
+    memory_id: string;
+    collection: string;
+    record_key: string;
+    title: string | null;
+    payload: JsonValue;
+    current_version: number;
+    updated_at: Date | string;
+    last_update_id: string | null;
+  }>(
+    `
+    SELECT memory_id::text, collection, record_key, title, payload,
+           current_version, updated_at, last_update_id
+    FROM signal_radar_memory_records
+    WHERE target_id = $1
+    ORDER BY updated_at DESC
+    LIMIT 80
+    `,
+    [targetRow.target_id]
+  );
+
+  const latestChanges = await queryable.query<Record<string, JsonValue> & { created_at: Date | string }>(
+    `
+    SELECT v.version_id::text, r.collection, r.record_key, r.title,
+           v.version_number, v.operation, v.diff, v.update_id, v.created_at
+    FROM signal_radar_memory_versions v
+    JOIN signal_radar_memory_records r ON r.memory_id = v.memory_id
+    WHERE r.target_id = $1
+    ORDER BY v.created_at DESC
+    LIMIT 40
+    `,
+    [targetRow.target_id]
+  );
+
+  const evidence = await queryable.query<Record<string, JsonValue> & { created_at: Date | string; collected_at: Date | string; published_at: Date | string | null }>(
+    `
+    SELECT evidence_id, source_id, usefulness_status, evidence_kind, source_quality,
+           confidence, filter_reasons, url, title, published_at, collected_at,
+           text_excerpt, duplicate_of, created_at
+    FROM signal_radar_evidence_items
+    WHERE target_id = $1
+    ORDER BY created_at DESC
+    LIMIT 80
+    `,
+    [targetRow.target_id]
+  );
+
+  const gates = await queryable.query<Record<string, JsonValue> & { created_at: Date | string }>(
+    `
+    SELECT gate_id::text, gate_type, subject, status, evidence_kind, evidence_strength,
+           verification_status, source_quality, severity, reason, evidence_id, update_id, created_at
+    FROM signal_radar_quality_gates
+    WHERE target_id = $1
+    ORDER BY created_at DESC
+    LIMIT 80
+    `,
+    [targetRow.target_id]
+  );
+
+  return {
+    code: targetRow.symbol,
+    target: {
+      ...targetRow,
+      updated_at: toIso(targetRow.updated_at)
+    },
+    memory: memory.rows.map((row) => ({
+      memory_id: row.memory_id,
+      collection: row.collection,
+      record_key: row.record_key,
+      title: row.title,
+      current_version: row.current_version,
+      updated_at: toIso(row.updated_at),
+      last_update_id: row.last_update_id,
+      preview: memoryPreview(row.payload)
+    })),
+    latest_changes: latestChanges.rows.map(normalizeDateRow),
+    evidence: evidence.rows.map(normalizeDateRow),
+    quality_gates: gates.rows.map(normalizeDateRow)
   };
 }
 
@@ -542,7 +863,107 @@ export async function loadPostgresMemoryContext(
   return grouped as Record<string, JsonValue>;
 }
 
-async function insertCollectorItem(client: PoolClient, batchId: string, item: CollectorItem): Promise<void> {
+export async function listPostgresMemoryRecords(
+  options: { collection?: string | null; limit?: number } = {},
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<PostgresMemoryRecordListItem[]> {
+  const rows = await queryable.query<{
+    memory_id: string;
+    collection: string;
+    record_key: string;
+    title: string | null;
+    payload: JsonValue;
+    current_version: number;
+    updated_at: Date | string;
+    last_update_id: string | null;
+  }>(
+    `
+    SELECT memory_id::text, collection, record_key, title, payload, current_version, updated_at, last_update_id
+    FROM signal_radar_memory_records
+    WHERE ($1::text IS NULL OR collection = $1)
+    ORDER BY updated_at DESC
+    LIMIT $2
+    `,
+    [options.collection ?? null, options.limit ?? 80]
+  );
+  return rows.rows.map((row) => ({
+    memory_id: row.memory_id,
+    collection: row.collection,
+    record_key: row.record_key,
+    title: row.title,
+    current_version: row.current_version,
+    updated_at: toIso(row.updated_at),
+    last_update_id: row.last_update_id,
+    preview: memoryPreview(row.payload)
+  }));
+}
+
+export async function getPostgresMemoryRecord(
+  memoryId: string,
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<PostgresMemoryRecordPayload | null> {
+  const record = await queryable.query<{
+    memory_id: string;
+    collection: string;
+    record_key: string;
+    title: string | null;
+    payload: JsonValue;
+    current_version: number;
+    updated_at: Date | string;
+    last_update_id: string | null;
+  }>(
+    `
+    SELECT memory_id::text, collection, record_key, title, payload, current_version, updated_at, last_update_id
+    FROM signal_radar_memory_records
+    WHERE memory_id = $1
+    `,
+    [memoryId]
+  );
+  const row = record.rows[0];
+  if (!row) return null;
+  const versions = await queryable.query<{
+    version_id: string;
+    version_number: number;
+    update_id: string;
+    job_id: string | null;
+    operation: string;
+    before_payload: JsonValue | null;
+    after_payload: JsonValue | null;
+    diff: JsonValue;
+    created_at: Date | string;
+  }>(
+    `
+    SELECT version_id::text, version_number, update_id, job_id, operation,
+           before_payload, after_payload, diff, created_at
+    FROM signal_radar_memory_versions
+    WHERE memory_id = $1
+    ORDER BY version_number DESC
+    LIMIT 80
+    `,
+    [memoryId]
+  );
+  return {
+    memory_id: row.memory_id,
+    collection: row.collection,
+    record_key: row.record_key,
+    title: row.title,
+    payload: row.payload,
+    current_version: row.current_version,
+    updated_at: toIso(row.updated_at),
+    last_update_id: row.last_update_id,
+    versions: versions.rows.map((version) => ({
+      ...version,
+      created_at: toIso(version.created_at)
+    }))
+  };
+}
+
+async function insertCollectorItem(
+  client: PoolClient,
+  batchId: string,
+  item: CollectorItem,
+  context: { jobId: string; targetId: string | null }
+): Promise<void> {
   await client.query(
     `
     INSERT INTO signal_radar_collector_items (
@@ -571,6 +992,183 @@ async function insertCollectorItem(client: PoolClient, batchId: string, item: Co
       jsonb(item.source_meta)
     ]
   );
+  await insertEvidenceSnapshot(client, item, context);
+}
+
+async function insertEvidenceSnapshot(
+  client: PoolClient,
+  item: CollectorItem,
+  context: { jobId: string; targetId: string | null }
+): Promise<void> {
+  const contentHash = evidenceContentHash(item);
+  const duplicate = await client.query<{ evidence_id: string }>(
+    `
+    SELECT evidence_id
+    FROM signal_radar_evidence_items
+    WHERE content_hash = $1 AND evidence_id <> $2
+    ORDER BY created_at ASC
+    LIMIT 1
+    `,
+    [contentHash, item.canonical_id]
+  );
+  const duplicateOf = duplicate.rows[0]?.evidence_id ?? null;
+  const classification = classifyCollectorItem(item, { duplicateOf });
+  const sourceProfile = sourceProfileFromCollectorItem(item, classification);
+
+  await client.query(
+    `
+    INSERT INTO signal_radar_sources (
+      source_id, source_type, display_name, canonical_url, credibility_tier,
+      quality_score, profile
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    ON CONFLICT (source_id) DO UPDATE SET
+      source_type = EXCLUDED.source_type,
+      display_name = EXCLUDED.display_name,
+      canonical_url = COALESCE(EXCLUDED.canonical_url, signal_radar_sources.canonical_url),
+      credibility_tier = EXCLUDED.credibility_tier,
+      quality_score = EXCLUDED.quality_score,
+      profile = signal_radar_sources.profile || EXCLUDED.profile
+    `,
+    [
+      classification.source_id,
+      cleanText(item.author?.entity_type) || cleanText(item.source) || "unknown",
+      cleanText(item.author?.display_name) || cleanText(item.source) || classification.source_id,
+      cleanOptional(item.author?.url) ?? cleanOptional(item.url),
+      classification.source_quality,
+      classification.confidence,
+      jsonb(sourceProfile)
+    ]
+  );
+
+  await client.query(
+    `
+    INSERT INTO signal_radar_evidence_items (
+      evidence_id, job_id, target_id, collector_item_id, source_id, content_hash,
+      duplicate_of, usefulness_status, evidence_kind, source_quality, confidence,
+      filter_reasons, url, title, published_at, collected_at, text_excerpt, payload
+    )
+    VALUES (
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+      $12, $13, $14, $15, $16, $17, $18::jsonb
+    )
+    ON CONFLICT (evidence_id) DO UPDATE SET
+      job_id = EXCLUDED.job_id,
+      target_id = COALESCE(EXCLUDED.target_id, signal_radar_evidence_items.target_id),
+      source_id = EXCLUDED.source_id,
+      duplicate_of = EXCLUDED.duplicate_of,
+      usefulness_status = EXCLUDED.usefulness_status,
+      evidence_kind = EXCLUDED.evidence_kind,
+      source_quality = EXCLUDED.source_quality,
+      confidence = EXCLUDED.confidence,
+      filter_reasons = EXCLUDED.filter_reasons,
+      url = EXCLUDED.url,
+      title = EXCLUDED.title,
+      published_at = EXCLUDED.published_at,
+      collected_at = EXCLUDED.collected_at,
+      text_excerpt = EXCLUDED.text_excerpt,
+      payload = EXCLUDED.payload
+    `,
+    [
+      item.canonical_id,
+      context.jobId,
+      context.targetId,
+      item.canonical_id,
+      classification.source_id,
+      contentHash,
+      duplicateOf,
+      classification.usefulness_status,
+      classification.evidence_kind,
+      classification.source_quality,
+      classification.confidence,
+      classification.filter_reasons,
+      item.url,
+      item.title,
+      item.published_at || null,
+      item.collected_at,
+      textExcerpt(item.text),
+      jsonb({
+        collector_item: item as unknown as JsonValue,
+        classification: classification as unknown as JsonValue
+      })
+    ]
+  );
+
+  await insertQualityGate(client, {
+    jobId: context.jobId,
+    targetId: context.targetId,
+    evidenceId: item.canonical_id,
+    gateType: "evidence.filter",
+    subject: cleanText(item.title) || textExcerpt(item.text, 160),
+    decision: qualityGateFromEvidence(classification),
+    payload: {
+      content_hash: contentHash,
+      duplicate_of: duplicateOf,
+      filter_reasons: classification.filter_reasons
+    }
+  });
+}
+
+export async function insertPostgresQualityGate(
+  payload: {
+    jobId?: string | null;
+    targetId?: string | null;
+    updateId?: string | null;
+    memoryId?: string | null;
+    evidenceId?: string | null;
+    gateType: string;
+    subject?: string | null;
+    decision: QualityGateDecision;
+    payload?: Record<string, JsonValue>;
+  },
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<string> {
+  return insertQualityGate(queryable, payload);
+}
+
+async function insertQualityGate(
+  queryable: QueryTarget,
+  payload: {
+    jobId?: string | null;
+    targetId?: string | null;
+    updateId?: string | null;
+    memoryId?: string | null;
+    evidenceId?: string | null;
+    gateType: string;
+    subject?: string | null;
+    decision: QualityGateDecision;
+    payload?: Record<string, JsonValue>;
+  }
+): Promise<string> {
+  const inserted = await queryable.query<{ gate_id: string }>(
+    `
+    INSERT INTO signal_radar_quality_gates (
+      job_id, target_id, update_id, memory_id, evidence_id, gate_type, subject,
+      status, evidence_kind, evidence_strength, verification_status, source_quality,
+      severity, reason, payload
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb)
+    RETURNING gate_id::text
+    `,
+    [
+      payload.jobId ?? null,
+      payload.targetId ?? null,
+      payload.updateId ?? null,
+      payload.memoryId ?? null,
+      payload.evidenceId ?? null,
+      payload.gateType,
+      cleanText(payload.subject),
+      payload.decision.status,
+      payload.decision.evidence_kind,
+      payload.decision.evidence_strength,
+      payload.decision.verification_status,
+      payload.decision.source_quality,
+      payload.decision.severity,
+      payload.decision.reason,
+      jsonb(payload.payload ?? {})
+    ]
+  );
+  return inserted.rows[0].gate_id;
 }
 
 function normalizeStatusPayload(row: Record<string, JsonValue> & { updated_at?: Date | string }): JsonValue {
@@ -589,10 +1187,47 @@ function normalizeStatusPayload(row: Record<string, JsonValue> & { updated_at?: 
 }
 
 function normalizeJobStatus(status: string): JobStatus["status"] {
-  if (status === "done" || status === "failed" || status === "running") return status;
+  if (status === "queued" || status === "done" || status === "failed" || status === "running" || status === "canceled") {
+    return status;
+  }
   return "created";
 }
 
 function toIso(value: Date | string | JsonValue): string {
   return value instanceof Date ? value.toISOString() : String(value);
+}
+
+function normalizeDateRow<T extends Record<string, JsonValue> & { created_at?: Date | string; collected_at?: Date | string; published_at?: Date | string | null }>(
+  row: T
+): JsonValue {
+  return {
+    ...row,
+    created_at: row.created_at ? toIso(row.created_at) : undefined,
+    collected_at: row.collected_at ? toIso(row.collected_at) : undefined,
+    published_at: row.published_at ? toIso(row.published_at) : null
+  } as JsonValue;
+}
+
+function normalizeTargetCode(value: unknown): string {
+  return cleanText(value).toUpperCase();
+}
+
+function cleanOptional(value: unknown): string | null {
+  const text = cleanText(value);
+  return text || null;
+}
+
+function memoryPreview(payload: JsonValue): string {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return String(payload ?? "");
+  const row = payload as Record<string, JsonValue>;
+  return String(
+    row.claim ??
+      row.summary ??
+      row.note ??
+      row.title ??
+      row.subject ??
+      row.primary_theme ??
+      row.name ??
+      JSON.stringify(payload)
+  ).slice(0, 180);
 }

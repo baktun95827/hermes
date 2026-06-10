@@ -69,6 +69,7 @@ export async function createManualJob(options: {
   title?: string | null;
   url?: string | null;
   userLabel?: string | null;
+  targetCode?: string | null;
   inputChannel?: string;
   contentType?: string;
   requiresVerification?: boolean;
@@ -101,6 +102,7 @@ export async function createManualJob(options: {
     title: options.title,
     url: options.url,
     userLabel: options.userLabel,
+    targetCode: options.targetCode,
     inputChannel: options.inputChannel ?? "cli",
     contentType: options.contentType ?? "note",
     requiresVerification: Boolean(options.requiresVerification)
@@ -114,11 +116,12 @@ export async function createManualJob(options: {
     kind: "manual_text",
     config_path: path.resolve(expandHome(configPath)),
     collector_batch_path: batchPath,
-    title: options.title ?? null,
-    url: options.url ?? null,
-    user_label: options.userLabel ?? null,
-    input_channel: options.inputChannel ?? "cli",
-    content_type: options.contentType ?? "note",
+      title: options.title ?? null,
+      url: options.url ?? null,
+      user_label: options.userLabel ?? null,
+      target_code: options.targetCode ?? null,
+      input_channel: options.inputChannel ?? "cli",
+      content_type: options.contentType ?? "note",
     requires_verification: Boolean(options.requiresVerification)
   };
   await writeJsonAtomic(path.join(jobDir, "input.json"), input as unknown as JsonValue);
@@ -268,6 +271,43 @@ export async function runNextPostgresJob(options: {
     providerName: options.providerName,
     model: options.model
   });
+}
+
+export async function runPostgresWorkerLoop(options: {
+  queueName?: string;
+  workerId?: string;
+  providerName?: string;
+  model?: string;
+  pollMs?: number;
+  batchLimit?: number;
+} = {}): Promise<void> {
+  const pollMs = Math.max(250, options.pollMs ?? Number(process.env.XRADAR_WORKER_POLL_MS ?? 1500));
+  const batchLimit = options.batchLimit ?? Number(process.env.XRADAR_WORKER_BATCH_LIMIT ?? 0);
+  const workerId = options.workerId ?? `worker:${process.pid}`;
+  let processed = 0;
+  let shouldStop = false;
+  const stop = () => {
+    shouldStop = true;
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+
+  while (!shouldStop) {
+    const status = await runNextPostgresJob({
+      queueName: options.queueName,
+      workerId,
+      providerName: options.providerName,
+      model: options.model
+    });
+    if (status) {
+      processed += 1;
+      process.stdout.write(`${JSON.stringify({ worker_id: workerId, processed, job_id: status.job_id, status: status.status })}\n`);
+      if (batchLimit > 0 && processed >= batchLimit) return;
+      continue;
+    }
+    if (batchLimit > 0) return;
+    await sleep(pollMs);
+  }
 }
 
 export async function runPostgresJob(options: {
@@ -629,6 +669,7 @@ async function main(argv: string[]): Promise<number> {
       title: stringArg(parsed.title),
       url: stringArg(parsed.url),
       userLabel: stringArg(parsed["user-label"]),
+      targetCode: stringArg(parsed["target-code"]),
       inputChannel: stringArg(parsed["input-channel"]) ?? "cli",
       contentType: stringArg(parsed["content-type"]) ?? "note",
       requiresVerification: Boolean(parsed["requires-verification"])
@@ -653,6 +694,7 @@ async function main(argv: string[]): Promise<number> {
       title: stringArg(parsed.title),
       url: stringArg(parsed.url),
       userLabel: stringArg(parsed["user-label"]),
+      targetCode: stringArg(parsed["target-code"]),
       inputChannel: stringArg(parsed["input-channel"]) ?? "cli",
       contentType: stringArg(parsed["content-type"]) ?? "note",
       requiresVerification: Boolean(parsed["requires-verification"]),
@@ -673,6 +715,17 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(status ?? { status: "idle" }, null, 2)}\n`);
     return status?.status === "failed" ? 1 : 0;
   }
+  if (command === "db-worker") {
+    await runPostgresWorkerLoop({
+      queueName: stringArg(parsed.queue) ?? "analysis",
+      workerId: stringArg(parsed["worker-id"]),
+      providerName: stringArg(parsed.provider),
+      model: stringArg(parsed.model),
+      pollMs: parsed["poll-ms"] ? Number(parsed["poll-ms"]) : undefined,
+      batchLimit: parsed.limit ? Number(parsed.limit) : undefined
+    });
+    return 0;
+  }
   if (command === "run-job") {
     const jobDir = stringArg(parsed["job-dir"]);
     if (!jobDir) throw new Error("--job-dir is required");
@@ -685,12 +738,16 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return status.status === "done" ? 0 : 1;
   }
-  process.stderr.write("Usage: npm run signal-radar -- <ingest-text|enqueue-ingest-text|run-job|db-work-once> [options]\n");
+  process.stderr.write("Usage: npm run signal-radar -- <ingest-text|enqueue-ingest-text|run-job|db-work-once|db-worker> [options]\n");
   return 2;
 }
 
 function stringArg(value: string | boolean | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function parseArgs(args: string[]): Record<string, string | boolean> {

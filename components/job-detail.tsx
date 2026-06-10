@@ -35,7 +35,7 @@ export function JobDetail({ initialPayload }: { initialPayload: JobPayload }) {
   }
 
   useEffect(() => {
-    if (status !== "created" && status !== "running") return;
+    if (status !== "created" && status !== "queued" && status !== "running") return;
     const handle = window.setInterval(refresh, 1500);
     return () => window.clearInterval(handle);
   }, [status]);

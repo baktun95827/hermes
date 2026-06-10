@@ -8,8 +8,11 @@ Owned contracts and behavior:
 - manual text ingestion
 - `analysis_input/v1` construction
 - strict `MEMORY_UPDATE` extraction and normalization
+- useful evidence snapshot and source quality helpers
+- agent quality gates for hard evidence, weak evidence, rumors, speculation, and contradictions
 - Postgres-backed memory application
 - memory record versioning and JSON diff generation
+- Postgres queue claim, job payload, job logs, memory record browsing, target read projection, and version history queries
 - memory audit records
 - artifact path and config handling
 
@@ -20,6 +23,8 @@ Rules:
 - no provider-specific LLM code
 - deterministic functions should run in smoke tests without network or credentials
 - product runtime state should be Postgres-backed; local files are only a compatibility/debug bridge
+- crawler scheduling is intentionally outside the current foundation
+- memory is agent-written; do not add manual edit workflows to core contracts
 
 Primary imports:
 

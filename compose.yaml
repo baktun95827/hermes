@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: signal-radar-postgres
+    environment:
+      POSTGRES_USER: signal_radar
+      POSTGRES_PASSWORD: signal_radar
+      POSTGRES_DB: signal_radar
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - signal-radar-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signal_radar -d signal_radar"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  signal-radar-postgres:

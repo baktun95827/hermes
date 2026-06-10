@@ -22,7 +22,13 @@ npm run signal-radar -- enqueue-ingest-text \
 Process one queued job:
 
 ```bash
-npm run signal-radar -- db-work-once
+npm run worker:once
+```
+
+Run continuously:
+
+```bash
+npm run worker
 ```
 
 Run with Codex CLI:
@@ -44,4 +50,5 @@ Run local smoke checks:
 
 ```bash
 npm run smoke
+npm run smoke:db
 ```

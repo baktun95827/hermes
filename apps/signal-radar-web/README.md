@@ -13,9 +13,11 @@ Run locally:
 
 ```bash
 npm install
+docker compose up -d postgres
 export DATABASE_URL=postgres://signal_radar:signal_radar@127.0.0.1:5432/signal_radar
 npm run db:migrate
 npm run dev
+npm run worker
 ```
 
 Then open:
@@ -32,6 +34,7 @@ curl -sS http://127.0.0.1:3000/api/healthz
 curl -sS -X POST http://127.0.0.1:3000/api/ingest-text \
   -H 'Content-Type: application/json' \
   -d '{
+    "target_code": "300750",
     "title": "英维克液冷讨论",
     "text": "英维克液冷业务被市场重新讨论，但需要公告或订单验证。",
     "user_label": "user_note",
@@ -39,7 +42,22 @@ curl -sS -X POST http://127.0.0.1:3000/api/ingest-text \
   }'
 
 curl -sS http://127.0.0.1:3000/api/jobs/<job_id>
+
+curl -sS http://127.0.0.1:3000/api/targets/<code>
 ```
+
+Admin pages:
+
+- `/jobs`: job and queue operations
+- `/memory`: current memory records
+- `/memory/<memory_id>`: Git-like JSON diff history
+
+Current product API scope:
+
+- target read projection for future consumer pages
+- evidence and quality gate inspection
+- no crawler scheduling UI yet
+- no manual memory editor
 
 Environment variables:
 

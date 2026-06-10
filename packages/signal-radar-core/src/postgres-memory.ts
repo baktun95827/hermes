@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
+import { qualityGateFromMemoryRow } from "./evidence";
 import { buildMemoryUpdateId, hasParseableMemoryUpdate, parseMemoryUpdate } from "./memory-update";
 import { buildMemoryRecordCandidates, buildMemoryVersionChange } from "./memory-version";
 import { cleanText } from "./schemas";
 import { getSharedPostgresPool, jsonb, withPostgresTransaction } from "./postgres";
+import { insertPostgresQualityGate } from "./postgres-store";
 import type { JsonValue, MemoryApplicationResult, MemoryUpdate } from "./types";
 
 export type ApplyMemoryUpdatePostgresOptions = {
@@ -82,6 +84,11 @@ export async function applyMemoryUpdateToPostgres(
       jobId: options.jobId ?? null,
       targetId: options.targetId ?? null
     });
+    const qualityGateCount = await insertMemoryQualityGates(client, parsed, {
+      updateId,
+      jobId: options.jobId ?? null,
+      targetId: options.targetId ?? null
+    });
     await client.query(
       `
       UPDATE signal_radar_memory_updates
@@ -101,7 +108,8 @@ export async function applyMemoryUpdateToPostgres(
         jsonb({
           memory_versions_created: versionCount,
           information_unit_count: parsed.information_units.length,
-          event_cluster_count: parsed.event_clusters.length
+          event_cluster_count: parsed.event_clusters.length,
+          quality_gate_count: qualityGateCount
         })
       ]
     );
@@ -117,6 +125,52 @@ export async function applyMemoryUpdateToPostgres(
       already_applied: false
     };
   });
+}
+
+async function insertMemoryQualityGates(
+  client: PoolClient,
+  parsed: MemoryUpdate,
+  ids: { updateId: string; jobId: string | null; targetId: string | null }
+): Promise<number> {
+  let count = 0;
+  for (const row of parsed.information_units) {
+    await insertMemoryQualityGate(client, row, "memory.information_unit", ids);
+    count += 1;
+  }
+  for (const row of parsed.event_clusters) {
+    await insertMemoryQualityGate(client, row, "memory.event_cluster", ids);
+    count += 1;
+  }
+  for (const row of parsed.alert_candidates) {
+    await insertMemoryQualityGate(client, row, "memory.alert_candidate", ids);
+    count += 1;
+  }
+  for (const row of parsed.contradictions) {
+    await insertMemoryQualityGate(client, row, "memory.contradiction", ids);
+    count += 1;
+  }
+  return count;
+}
+
+async function insertMemoryQualityGate(
+  client: PoolClient,
+  row: Record<string, JsonValue>,
+  gateType: string,
+  ids: { updateId: string; jobId: string | null; targetId: string | null }
+): Promise<void> {
+  await insertPostgresQualityGate(
+    {
+      jobId: ids.jobId,
+      targetId: ids.targetId,
+      updateId: ids.updateId,
+      evidenceId: stringList(row.evidence_item_ids)[0] ?? null,
+      gateType,
+      subject: cleanText(row.subject ?? row.title ?? row.claim ?? row.summary),
+      decision: qualityGateFromMemoryRow(row, gateType),
+      payload: row
+    },
+    client
+  );
 }
 
 async function applyMemoryRecords(

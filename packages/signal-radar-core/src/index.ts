@@ -1,5 +1,6 @@
 export * from "./analysis-input";
 export * from "./config";
+export * from "./evidence";
 export * from "./fs";
 export * from "./json-diff";
 export * from "./manual-ingest";

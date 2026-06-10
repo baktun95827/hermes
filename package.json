@@ -8,9 +8,12 @@
     "build": "next build",
     "start": "next start",
     "db:migrate": "tsx scripts/db-migrate.ts",
+    "worker": "tsx services/signal-radar-worker/worker.ts db-worker",
+    "worker:once": "tsx services/signal-radar-worker/worker.ts db-work-once",
     "typecheck": "tsc --noEmit",
     "signal-radar": "tsx services/signal-radar-worker/worker.ts",
-    "smoke": "tsx scripts/signal-radar-smoke.ts"
+    "smoke": "tsx scripts/signal-radar-smoke.ts",
+    "smoke:db": "tsx scripts/signal-radar-db-smoke.ts"
   },
   "dependencies": {
     "@types/pg": "^8.20.0",

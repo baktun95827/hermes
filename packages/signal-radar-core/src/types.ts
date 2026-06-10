@@ -102,6 +102,7 @@ export type JobInput = {
   title?: string | null;
   url?: string | null;
   user_label?: string | null;
+  target_code?: string | null;
   input_channel: string;
   content_type: string;
   requires_verification: boolean;
@@ -109,7 +110,7 @@ export type JobInput = {
 
 export type JobStatus = {
   job_id: string;
-  status: "created" | "running" | "done" | "failed";
+  status: "created" | "queued" | "running" | "done" | "failed" | "canceled";
   created_at?: string;
   started_at?: string;
   finished_at?: string;

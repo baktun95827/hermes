@@ -12,13 +12,15 @@ app/
 components/
   Product UI components for ingest, status, and job inspection.
 packages/signal-radar-core/src/
-  Runtime-neutral contracts, ingestion, analysis-input, Postgres store, MEMORY_UPDATE, memory versioning, and diff logic.
+  Runtime-neutral contracts, ingestion, analysis-input, Postgres store, evidence ledger, quality gates, MEMORY_UPDATE, memory versioning, and diff logic.
 services/signal-radar-worker/
   TypeScript worker CLI, Postgres queue claim loop, and provider execution layer.
 scripts/
   TypeScript smoke tests and database migration runner.
 db/migrations/
   Postgres schema for jobs, queue, collector data, artifacts, memory versions, and audit events.
+compose.yaml
+  Local Postgres service for development.
 integrations/hermes/
   Optional external adapter. It is not part of the product runtime.
 data/
@@ -54,6 +56,8 @@ Postgres should become the durable product store for:
 
 - targets and identifiers
 - source items and normalized collector batches
+- useful evidence snapshots, source identity, duplicate markers, and filtering decisions
+- quality gates that distinguish hard evidence, weak evidence, rumors, speculation, and contradictions
 - jobs, provider runs, queue state, and logs
 - memory snapshots, memory patches, and memory audit events
 - diffable memory version history
@@ -79,6 +83,8 @@ Durable contracts:
 - `collector_batch/v1`
 - `collector_item/v1`
 - `analysis_input/v1`
+- useful evidence snapshots derived from collector items
+- source quality and evidence quality classifications
 - strict `MEMORY_UPDATE`
 - Postgres-backed memory snapshots and patches for product runtime
 - memory audit records
@@ -87,6 +93,13 @@ Durable contracts:
 Product code should depend on these JSON contracts, not on agent sessions, browser crawler internals, or compatibility modules.
 
 Provider code should stay behind narrow adapters. Codex CLI is acceptable as the first analyzer provider; Claude and GPT API providers should fit the same worker contract.
+
+Current scope:
+
+- Keep crawler scheduling out of the runtime foundation for now.
+- Do not build manual memory editing or rollback workflows. Memory is agent-written; operators inspect evidence, quality gates, versions, and failures.
+- Keep targets simple at first: a public-market code plus optional exchange/country metadata. Concepts, themes, segments, and industry-chain facts are agent-managed memory.
+- Save useful or potentially useful evidence snapshots, not every low-value crawled fragment as product memory.
 
 ## Commands
 
@@ -99,6 +112,8 @@ npm install
 Run the product UI:
 
 ```bash
+cp .env.example .env
+docker compose up -d postgres
 export DATABASE_URL=postgres://signal_radar:signal_radar@127.0.0.1:5432/signal_radar
 npm run db:migrate
 npm run dev
@@ -114,6 +129,7 @@ Queue a manual text job with the fixture provider:
 
 ```bash
 npm run signal-radar -- enqueue-ingest-text \
+  --target-code 300750 \
   --text "英维克液冷业务被市场重新讨论，但需要公告或订单验证。" \
   --provider fixture
 ```
@@ -121,16 +137,32 @@ npm run signal-radar -- enqueue-ingest-text \
 Process one queued job:
 
 ```bash
-npm run signal-radar -- db-work-once
+npm run worker:once
+```
+
+Run a persistent local worker:
+
+```bash
+npm run worker
 ```
 
 Run smoke validation:
 
 ```bash
 npm run smoke
+DATABASE_URL=postgres://signal_radar:signal_radar@127.0.0.1:5432/signal_radar npm run smoke:db
 npm run typecheck
 npm run build
 ```
+
+Admin surfaces:
+
+- `/` manual ingest
+- `/jobs` queue and job operations
+- `/jobs/<job_id>` job artifacts, logs, memory update, and memory versions
+- `/memory` current memory records
+- `/memory/<memory_id>` current payload and version diff history
+- `/api/targets/<code>` basic target read projection for future consumer pages
 
 Use Codex CLI intentionally:
 

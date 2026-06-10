@@ -7,8 +7,12 @@ import {
 } from "../services/signal-radar-worker/worker";
 import {
   applyMemoryUpdate,
+  buildManualCollectorItem,
   buildMemoryRecordCandidates,
+  classifyCollectorItem,
   diffJson,
+  qualityGateFromEvidence,
+  qualityGateFromMemoryRow,
   writeJsonAtomic,
   type JobStatus
 } from "../packages/signal-radar-core/src";
@@ -38,6 +42,10 @@ async function postgresFoundationSmoke(): Promise<void> {
     path.join(process.cwd(), "db", "migrations", "0001_signal_radar_core.sql"),
     "utf8"
   );
+  const evidenceMigration = await readFile(
+    path.join(process.cwd(), "db", "migrations", "0002_signal_radar_evidence_quality.sql"),
+    "utf8"
+  );
   const postgresStore = await readFile(
     path.join(process.cwd(), "packages", "signal-radar-core", "src", "postgres-store.ts"),
     "utf8"
@@ -49,6 +57,13 @@ async function postgresFoundationSmoke(): Promise<void> {
     "signal_radar_memory_versions"
   ]) {
     assertTrue(migration.includes(required), `missing Postgres foundation SQL: ${required}`);
+  }
+  for (const required of [
+    "signal_radar_sources",
+    "signal_radar_evidence_items",
+    "signal_radar_quality_gates"
+  ]) {
+    assertTrue(evidenceMigration.includes(required), `missing evidence/quality SQL: ${required}`);
   }
   assertTrue(postgresStore.includes("FOR UPDATE SKIP LOCKED"), "queue claim must use SKIP LOCKED");
 
@@ -84,6 +99,27 @@ async function postgresFoundationSmoke(): Promise<void> {
   assertTrue(diff.some((item) => item.path === "/confidence"), "memory diff should include changed confidence");
   assertTrue(diff.some((item) => item.path === "/verification_status"), "memory diff should include added field");
   assertTrue(nullDiff.some((item) => item.path === "/value" && item.op === "replace"), "memory diff should preserve null as a value");
+  const rumorItem = buildManualCollectorItem({
+    text: "网传 SampleCo 可能取得新订单，但需要公告验证。",
+    collectedAt: new Date().toISOString(),
+    title: "rumor classification smoke",
+    requiresVerification: true
+  });
+  const classification = classifyCollectorItem(rumorItem);
+  const evidenceGate = qualityGateFromEvidence(classification);
+  assertTrue(classification.evidence_kind === "rumor", "rumor item should stay separated from hard evidence");
+  assertTrue(evidenceGate.status === "watch", "rumor evidence should be watched");
+  const hardGate = qualityGateFromMemoryRow(
+    {
+      subject: "SampleCo",
+      claim: "SampleCo filed an official announcement.",
+      evidence_strength: "official",
+      verification_status: "confirmed",
+      memory_action: "write"
+    },
+    "memory.information_unit"
+  );
+  assertTrue(hardGate.status === "allow", "official confirmed memory signal should be allowed");
   console.log("ok Postgres foundation schema/diff");
 }
 
