@@ -1,0 +1,3048 @@
+{
+  "id": "64f12b39-8213-4058-b480-ef974fb4c9c6",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.signal_radar_alert_candidates": {
+      "name": "signal_radar_alert_candidates",
+      "schema": "",
+      "columns": {
+        "alert_id": {
+          "name": "alert_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "update_id": {
+          "name": "update_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "alert_level": {
+          "name": "alert_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "numeric(5, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence_item_ids": {
+          "name": "evidence_item_ids",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "source_ids": {
+          "name": "source_ids",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "signal_radar_alert_candidates_update_id_signal_radar_memory_updates_update_id_fk": {
+          "name": "signal_radar_alert_candidates_update_id_signal_radar_memory_updates_update_id_fk",
+          "tableFrom": "signal_radar_alert_candidates",
+          "tableTo": "signal_radar_memory_updates",
+          "columnsFrom": [
+            "update_id"
+          ],
+          "columnsTo": [
+            "update_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "signal_radar_alert_candidates_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_alert_candidates_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_alert_candidates",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_alert_candidates_target_id_signal_radar_targets_target_id_fk": {
+          "name": "signal_radar_alert_candidates_target_id_signal_radar_targets_target_id_fk",
+          "tableFrom": "signal_radar_alert_candidates",
+          "tableTo": "signal_radar_targets",
+          "columnsFrom": [
+            "target_id"
+          ],
+          "columnsTo": [
+            "target_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_analysis_artifacts": {
+      "name": "signal_radar_analysis_artifacts",
+      "schema": "",
+      "columns": {
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'created'"
+        },
+        "analysis_input": {
+          "name": "analysis_input",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "memory_context": {
+          "name": "memory_context",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "raw_report": {
+          "name": "raw_report",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "prompt": {
+          "name": "prompt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "report": {
+          "name": "report",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "summary": {
+          "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "run_metrics": {
+          "name": "run_metrics",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "generated_at": {
+          "name": "generated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_analysis_artifacts_job_idx": {
+          "name": "signal_radar_analysis_artifacts_job_idx",
+          "columns": [
+            {
+              "expression": "job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_analysis_artifacts_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_analysis_artifacts_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_analysis_artifacts",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_analysis_artifacts_status_check": {
+          "name": "signal_radar_analysis_artifacts_status_check",
+          "value": "\"signal_radar_analysis_artifacts\".\"status\" IN ('created', 'running', 'done', 'failed')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_collector_batches": {
+      "name": "signal_radar_collector_batches",
+      "schema": "",
+      "columns": {
+        "batch_id": {
+          "name": "batch_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "schema_version": {
+          "name": "schema_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "item_schema_version": {
+          "name": "item_schema_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "collector_run_id": {
+          "name": "collector_run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "collected_at": {
+          "name": "collected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "target": {
+          "name": "target",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "collector": {
+          "name": "collector",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "item_count": {
+          "name": "item_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "warnings": {
+          "name": "warnings",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "raw_meta": {
+          "name": "raw_meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_collector_batches_job_idx": {
+          "name": "signal_radar_collector_batches_job_idx",
+          "columns": [
+            {
+              "expression": "job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_collector_batches_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_collector_batches_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_collector_batches",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "signal_radar_collector_batches_collector_run_unique": {
+          "name": "signal_radar_collector_batches_collector_run_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "collector_run_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_collector_items": {
+      "name": "signal_radar_collector_items",
+      "schema": "",
+      "columns": {
+        "canonical_id": {
+          "name": "canonical_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "batch_id": {
+          "name": "batch_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "item_id": {
+          "name": "item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content_type": {
+          "name": "content_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "collected_at": {
+          "name": "collected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "url": {
+          "name": "url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "author": {
+          "name": "author",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "metrics": {
+          "name": "metrics",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "media": {
+          "name": "media",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "relations": {
+          "name": "relations",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "source_meta": {
+          "name": "source_meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_collector_items_batch_idx": {
+          "name": "signal_radar_collector_items_batch_idx",
+          "columns": [
+            {
+              "expression": "batch_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_collector_items_batch_id_signal_radar_collector_batches_batch_id_fk": {
+          "name": "signal_radar_collector_items_batch_id_signal_radar_collector_batches_batch_id_fk",
+          "tableFrom": "signal_radar_collector_items",
+          "tableTo": "signal_radar_collector_batches",
+          "columnsFrom": [
+            "batch_id"
+          ],
+          "columnsTo": [
+            "batch_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_event_clusters": {
+      "name": "signal_radar_event_clusters",
+      "schema": "",
+      "columns": {
+        "cluster_id": {
+          "name": "cluster_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "update_id": {
+          "name": "update_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "summary": {
+          "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "theme": {
+          "name": "theme",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signal_type": {
+          "name": "signal_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "novelty_level": {
+          "name": "novelty_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence_strength": {
+          "name": "evidence_strength",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "memory_action": {
+          "name": "memory_action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "alert_level": {
+          "name": "alert_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "numeric(5, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence_item_ids": {
+          "name": "evidence_item_ids",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "source_ids": {
+          "name": "source_ids",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_event_clusters_theme_idx": {
+          "name": "signal_radar_event_clusters_theme_idx",
+          "columns": [
+            {
+              "expression": "theme",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_event_clusters_update_id_signal_radar_memory_updates_update_id_fk": {
+          "name": "signal_radar_event_clusters_update_id_signal_radar_memory_updates_update_id_fk",
+          "tableFrom": "signal_radar_event_clusters",
+          "tableTo": "signal_radar_memory_updates",
+          "columnsFrom": [
+            "update_id"
+          ],
+          "columnsTo": [
+            "update_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "signal_radar_event_clusters_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_event_clusters_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_event_clusters",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_event_clusters_target_id_signal_radar_targets_target_id_fk": {
+          "name": "signal_radar_event_clusters_target_id_signal_radar_targets_target_id_fk",
+          "tableFrom": "signal_radar_event_clusters",
+          "tableTo": "signal_radar_targets",
+          "columnsFrom": [
+            "target_id"
+          ],
+          "columnsTo": [
+            "target_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_evidence_items": {
+      "name": "signal_radar_evidence_items",
+      "schema": "",
+      "columns": {
+        "evidence_id": {
+          "name": "evidence_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "collector_item_id": {
+          "name": "collector_item_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "source_id": {
+          "name": "source_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "duplicate_of": {
+          "name": "duplicate_of",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "usefulness_status": {
+          "name": "usefulness_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'potential'"
+        },
+        "evidence_kind": {
+          "name": "evidence_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unknown'"
+        },
+        "source_quality": {
+          "name": "source_quality",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unknown'"
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "numeric(5, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "filter_reasons": {
+          "name": "filter_reasons",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "url": {
+          "name": "url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "published_at": {
+          "name": "published_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "collected_at": {
+          "name": "collected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "text_excerpt": {
+          "name": "text_excerpt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_evidence_items_target_idx": {
+          "name": "signal_radar_evidence_items_target_idx",
+          "columns": [
+            {
+              "expression": "target_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "signal_radar_evidence_items_job_idx": {
+          "name": "signal_radar_evidence_items_job_idx",
+          "columns": [
+            {
+              "expression": "job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "signal_radar_evidence_items_content_hash_idx": {
+          "name": "signal_radar_evidence_items_content_hash_idx",
+          "columns": [
+            {
+              "expression": "content_hash",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "signal_radar_evidence_items_quality_idx": {
+          "name": "signal_radar_evidence_items_quality_idx",
+          "columns": [
+            {
+              "expression": "usefulness_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "evidence_kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "source_quality",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_evidence_items_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_evidence_items_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_evidence_items",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_evidence_items_target_id_signal_radar_targets_target_id_fk": {
+          "name": "signal_radar_evidence_items_target_id_signal_radar_targets_target_id_fk",
+          "tableFrom": "signal_radar_evidence_items",
+          "tableTo": "signal_radar_targets",
+          "columnsFrom": [
+            "target_id"
+          ],
+          "columnsTo": [
+            "target_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_evidence_items_collector_item_id_signal_radar_collector_items_canonical_id_fk": {
+          "name": "signal_radar_evidence_items_collector_item_id_signal_radar_collector_items_canonical_id_fk",
+          "tableFrom": "signal_radar_evidence_items",
+          "tableTo": "signal_radar_collector_items",
+          "columnsFrom": [
+            "collector_item_id"
+          ],
+          "columnsTo": [
+            "canonical_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_evidence_items_source_id_signal_radar_sources_source_id_fk": {
+          "name": "signal_radar_evidence_items_source_id_signal_radar_sources_source_id_fk",
+          "tableFrom": "signal_radar_evidence_items",
+          "tableTo": "signal_radar_sources",
+          "columnsFrom": [
+            "source_id"
+          ],
+          "columnsTo": [
+            "source_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_evidence_items_duplicate_of_signal_radar_evidence_items_evidence_id_fk": {
+          "name": "signal_radar_evidence_items_duplicate_of_signal_radar_evidence_items_evidence_id_fk",
+          "tableFrom": "signal_radar_evidence_items",
+          "tableTo": "signal_radar_evidence_items",
+          "columnsFrom": [
+            "duplicate_of"
+          ],
+          "columnsTo": [
+            "evidence_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_evidence_items_usefulness_status_check": {
+          "name": "signal_radar_evidence_items_usefulness_status_check",
+          "value": "\"signal_radar_evidence_items\".\"usefulness_status\" IN ('useful', 'potential', 'duplicate', 'low_value', 'rejected')"
+        },
+        "signal_radar_evidence_items_evidence_kind_check": {
+          "name": "signal_radar_evidence_items_evidence_kind_check",
+          "value": "\"signal_radar_evidence_items\".\"evidence_kind\" IN ('hard_evidence', 'weak_evidence', 'rumor', 'speculation', 'contradiction', 'unknown')"
+        },
+        "signal_radar_evidence_items_source_quality_check": {
+          "name": "signal_radar_evidence_items_source_quality_check",
+          "value": "\"signal_radar_evidence_items\".\"source_quality\" IN ('official', 'primary', 'reputable', 'secondary', 'social', 'manual', 'promotional', 'unknown')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_information_units": {
+      "name": "signal_radar_information_units",
+      "schema": "",
+      "columns": {
+        "information_unit_id": {
+          "name": "information_unit_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "update_id": {
+          "name": "update_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "claim": {
+          "name": "claim",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "verification_status": {
+          "name": "verification_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "signal_type": {
+          "name": "signal_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "novelty_level": {
+          "name": "novelty_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence_strength": {
+          "name": "evidence_strength",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "memory_action": {
+          "name": "memory_action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "alert_level": {
+          "name": "alert_level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confidence": {
+          "name": "confidence",
+          "type": "numeric(5, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence_item_ids": {
+          "name": "evidence_item_ids",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "source_ids": {
+          "name": "source_ids",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::text[]"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_information_units_subject_idx": {
+          "name": "signal_radar_information_units_subject_idx",
+          "columns": [
+            {
+              "expression": "subject",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_information_units_update_id_signal_radar_memory_updates_update_id_fk": {
+          "name": "signal_radar_information_units_update_id_signal_radar_memory_updates_update_id_fk",
+          "tableFrom": "signal_radar_information_units",
+          "tableTo": "signal_radar_memory_updates",
+          "columnsFrom": [
+            "update_id"
+          ],
+          "columnsTo": [
+            "update_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "signal_radar_information_units_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_information_units_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_information_units",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_information_units_target_id_signal_radar_targets_target_id_fk": {
+          "name": "signal_radar_information_units_target_id_signal_radar_targets_target_id_fk",
+          "tableFrom": "signal_radar_information_units",
+          "tableTo": "signal_radar_targets",
+          "columnsFrom": [
+            "target_id"
+          ],
+          "columnsTo": [
+            "target_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_job_logs": {
+      "name": "signal_radar_job_logs",
+      "schema": "",
+      "columns": {
+        "log_id": {
+          "name": "log_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "level": {
+          "name": "level",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'info'"
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "stdout": {
+          "name": "stdout",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "stderr": {
+          "name": "stderr",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "signal_radar_job_logs_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_job_logs_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_job_logs",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_job_logs_level_check": {
+          "name": "signal_radar_job_logs_level_check",
+          "value": "\"signal_radar_job_logs\".\"level\" IN ('debug', 'info', 'warn', 'error')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_job_queue": {
+      "name": "signal_radar_job_queue",
+      "schema": "",
+      "columns": {
+        "queue_id": {
+          "name": "queue_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "queue_name": {
+          "name": "queue_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'analysis'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "priority": {
+          "name": "priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "available_at": {
+          "name": "available_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "max_attempts": {
+          "name": "max_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 3
+        },
+        "locked_by": {
+          "name": "locked_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "locked_until": {
+          "name": "locked_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_error": {
+          "name": "last_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "enqueued_at": {
+          "name": "enqueued_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_job_queue_claim_idx": {
+          "name": "signal_radar_job_queue_claim_idx",
+          "columns": [
+            {
+              "expression": "queue_name",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "available_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "priority",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "enqueued_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"signal_radar_job_queue\".\"status\" IN ('queued', 'failed')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_job_queue_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_job_queue_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_job_queue",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "signal_radar_job_queue_job_queue_unique": {
+          "name": "signal_radar_job_queue_job_queue_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "job_id",
+            "queue_name"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_job_queue_status_check": {
+          "name": "signal_radar_job_queue_status_check",
+          "value": "\"signal_radar_job_queue\".\"status\" IN ('queued', 'claimed', 'done', 'failed', 'dead', 'canceled')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_jobs": {
+      "name": "signal_radar_jobs",
+      "schema": "",
+      "columns": {
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "schema_version": {
+          "name": "schema_version",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'signal-radar-job/v1'"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "url": {
+          "name": "url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_label": {
+          "name": "user_label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "input_channel": {
+          "name": "input_channel",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'web'"
+        },
+        "content_type": {
+          "name": "content_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'note'"
+        },
+        "requires_verification": {
+          "name": "requires_verification",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "config": {
+          "name": "config",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "input": {
+          "name": "input",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "queued_at": {
+          "name": "queued_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "failed_at": {
+          "name": "failed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_jobs_status_created_idx": {
+          "name": "signal_radar_jobs_status_created_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_jobs_target_id_signal_radar_targets_target_id_fk": {
+          "name": "signal_radar_jobs_target_id_signal_radar_targets_target_id_fk",
+          "tableFrom": "signal_radar_jobs",
+          "tableTo": "signal_radar_targets",
+          "columnsFrom": [
+            "target_id"
+          ],
+          "columnsTo": [
+            "target_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_jobs_status_check": {
+          "name": "signal_radar_jobs_status_check",
+          "value": "\"signal_radar_jobs\".\"status\" IN ('queued', 'running', 'done', 'failed', 'canceled')"
+        },
+        "signal_radar_jobs_job_id_check": {
+          "name": "signal_radar_jobs_job_id_check",
+          "value": "\"signal_radar_jobs\".\"job_id\" ~ '^[A-Za-z0-9][A-Za-z0-9_.-]{0,159}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_memory_audit_events": {
+      "name": "signal_radar_memory_audit_events",
+      "schema": "",
+      "columns": {
+        "audit_id": {
+          "name": "audit_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "update_id": {
+          "name": "update_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "memory_id": {
+          "name": "memory_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "version_id": {
+          "name": "version_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "severity": {
+          "name": "severity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'info'"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "signal_radar_memory_audit_events_update_id_signal_radar_memory_updates_update_id_fk": {
+          "name": "signal_radar_memory_audit_events_update_id_signal_radar_memory_updates_update_id_fk",
+          "tableFrom": "signal_radar_memory_audit_events",
+          "tableTo": "signal_radar_memory_updates",
+          "columnsFrom": [
+            "update_id"
+          ],
+          "columnsTo": [
+            "update_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_audit_events_memory_id_signal_radar_memory_records_memory_id_fk": {
+          "name": "signal_radar_memory_audit_events_memory_id_signal_radar_memory_records_memory_id_fk",
+          "tableFrom": "signal_radar_memory_audit_events",
+          "tableTo": "signal_radar_memory_records",
+          "columnsFrom": [
+            "memory_id"
+          ],
+          "columnsTo": [
+            "memory_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_audit_events_version_id_signal_radar_memory_versions_version_id_fk": {
+          "name": "signal_radar_memory_audit_events_version_id_signal_radar_memory_versions_version_id_fk",
+          "tableFrom": "signal_radar_memory_audit_events",
+          "tableTo": "signal_radar_memory_versions",
+          "columnsFrom": [
+            "version_id"
+          ],
+          "columnsTo": [
+            "version_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_audit_events_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_memory_audit_events_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_memory_audit_events",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_memory_audit_events_severity_check": {
+          "name": "signal_radar_memory_audit_events_severity_check",
+          "value": "\"signal_radar_memory_audit_events\".\"severity\" IN ('info', 'warn', 'error')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_memory_records": {
+      "name": "signal_radar_memory_records",
+      "schema": "",
+      "columns": {
+        "memory_id": {
+          "name": "memory_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "collection": {
+          "name": "collection",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "record_key": {
+          "name": "record_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "current_version": {
+          "name": "current_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "last_update_id": {
+          "name": "last_update_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_memory_records_collection_idx": {
+          "name": "signal_radar_memory_records_collection_idx",
+          "columns": [
+            {
+              "expression": "collection",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_memory_records_target_id_signal_radar_targets_target_id_fk": {
+          "name": "signal_radar_memory_records_target_id_signal_radar_targets_target_id_fk",
+          "tableFrom": "signal_radar_memory_records",
+          "tableTo": "signal_radar_targets",
+          "columnsFrom": [
+            "target_id"
+          ],
+          "columnsTo": [
+            "target_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_records_last_update_id_signal_radar_memory_updates_update_id_fk": {
+          "name": "signal_radar_memory_records_last_update_id_signal_radar_memory_updates_update_id_fk",
+          "tableFrom": "signal_radar_memory_records",
+          "tableTo": "signal_radar_memory_updates",
+          "columnsFrom": [
+            "last_update_id"
+          ],
+          "columnsTo": [
+            "update_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "signal_radar_memory_records_target_collection_key_unique": {
+          "name": "signal_radar_memory_records_target_collection_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "target_id",
+            "collection",
+            "record_key"
+          ]
+        },
+        "signal_radar_memory_records_collection_key_unique": {
+          "name": "signal_radar_memory_records_collection_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "collection",
+            "record_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_memory_updates": {
+      "name": "signal_radar_memory_updates",
+      "schema": "",
+      "columns": {
+        "update_id": {
+          "name": "update_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_run_id": {
+          "name": "provider_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'applied'"
+        },
+        "summary_hash": {
+          "name": "summary_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "parsed": {
+          "name": "parsed",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "information_unit_count": {
+          "name": "information_unit_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "event_cluster_count": {
+          "name": "event_cluster_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "entity_updates_applied": {
+          "name": "entity_updates_applied",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "event_updates_applied": {
+          "name": "event_updates_applied",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "macro_updates_applied": {
+          "name": "macro_updates_applied",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "source_updates_applied": {
+          "name": "source_updates_applied",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "memory_versions_created": {
+          "name": "memory_versions_created",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "applied_at": {
+          "name": "applied_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "signal_radar_memory_updates_job_idx": {
+          "name": "signal_radar_memory_updates_job_idx",
+          "columns": [
+            {
+              "expression": "job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_memory_updates_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_memory_updates_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_memory_updates",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_updates_artifact_id_signal_radar_analysis_artifacts_artifact_id_fk": {
+          "name": "signal_radar_memory_updates_artifact_id_signal_radar_analysis_artifacts_artifact_id_fk",
+          "tableFrom": "signal_radar_memory_updates",
+          "tableTo": "signal_radar_analysis_artifacts",
+          "columnsFrom": [
+            "artifact_id"
+          ],
+          "columnsTo": [
+            "artifact_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_updates_provider_run_id_signal_radar_provider_runs_provider_run_id_fk": {
+          "name": "signal_radar_memory_updates_provider_run_id_signal_radar_provider_runs_provider_run_id_fk",
+          "tableFrom": "signal_radar_memory_updates",
+          "tableTo": "signal_radar_provider_runs",
+          "columnsFrom": [
+            "provider_run_id"
+          ],
+          "columnsTo": [
+            "provider_run_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_updates_target_id_signal_radar_targets_target_id_fk": {
+          "name": "signal_radar_memory_updates_target_id_signal_radar_targets_target_id_fk",
+          "tableFrom": "signal_radar_memory_updates",
+          "tableTo": "signal_radar_targets",
+          "columnsFrom": [
+            "target_id"
+          ],
+          "columnsTo": [
+            "target_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_memory_updates_status_check": {
+          "name": "signal_radar_memory_updates_status_check",
+          "value": "\"signal_radar_memory_updates\".\"status\" IN ('applied', 'failed', 'skipped')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_memory_versions": {
+      "name": "signal_radar_memory_versions",
+      "schema": "",
+      "columns": {
+        "version_id": {
+          "name": "version_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "memory_id": {
+          "name": "memory_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version_number": {
+          "name": "version_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "update_id": {
+          "name": "update_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider_run_id": {
+          "name": "provider_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "operation": {
+          "name": "operation",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "before_payload": {
+          "name": "before_payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "after_payload": {
+          "name": "after_payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "diff": {
+          "name": "diff",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_memory_versions_memory_idx": {
+          "name": "signal_radar_memory_versions_memory_idx",
+          "columns": [
+            {
+              "expression": "memory_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "version_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "signal_radar_memory_versions_update_idx": {
+          "name": "signal_radar_memory_versions_update_idx",
+          "columns": [
+            {
+              "expression": "update_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_memory_versions_memory_id_signal_radar_memory_records_memory_id_fk": {
+          "name": "signal_radar_memory_versions_memory_id_signal_radar_memory_records_memory_id_fk",
+          "tableFrom": "signal_radar_memory_versions",
+          "tableTo": "signal_radar_memory_records",
+          "columnsFrom": [
+            "memory_id"
+          ],
+          "columnsTo": [
+            "memory_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_versions_update_id_signal_radar_memory_updates_update_id_fk": {
+          "name": "signal_radar_memory_versions_update_id_signal_radar_memory_updates_update_id_fk",
+          "tableFrom": "signal_radar_memory_versions",
+          "tableTo": "signal_radar_memory_updates",
+          "columnsFrom": [
+            "update_id"
+          ],
+          "columnsTo": [
+            "update_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_versions_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_memory_versions_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_memory_versions",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_versions_artifact_id_signal_radar_analysis_artifacts_artifact_id_fk": {
+          "name": "signal_radar_memory_versions_artifact_id_signal_radar_analysis_artifacts_artifact_id_fk",
+          "tableFrom": "signal_radar_memory_versions",
+          "tableTo": "signal_radar_analysis_artifacts",
+          "columnsFrom": [
+            "artifact_id"
+          ],
+          "columnsTo": [
+            "artifact_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_memory_versions_provider_run_id_signal_radar_provider_runs_provider_run_id_fk": {
+          "name": "signal_radar_memory_versions_provider_run_id_signal_radar_provider_runs_provider_run_id_fk",
+          "tableFrom": "signal_radar_memory_versions",
+          "tableTo": "signal_radar_provider_runs",
+          "columnsFrom": [
+            "provider_run_id"
+          ],
+          "columnsTo": [
+            "provider_run_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "signal_radar_memory_versions_memory_version_unique": {
+          "name": "signal_radar_memory_versions_memory_version_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "memory_id",
+            "version_number"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_memory_versions_operation_check": {
+          "name": "signal_radar_memory_versions_operation_check",
+          "value": "\"signal_radar_memory_versions\".\"operation\" IN ('create', 'update', 'delete', 'noop')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_provider_runs": {
+      "name": "signal_radar_provider_runs",
+      "schema": "",
+      "columns": {
+        "provider_run_id": {
+          "name": "provider_run_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "artifact_id": {
+          "name": "artifact_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "model": {
+          "name": "model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'running'"
+        },
+        "prompt_hash": {
+          "name": "prompt_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "output_hash": {
+          "name": "output_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "input_tokens": {
+          "name": "input_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "output_tokens": {
+          "name": "output_tokens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cost_usd": {
+          "name": "cost_usd",
+          "type": "numeric(12, 6)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw_meta": {
+          "name": "raw_meta",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "signal_radar_provider_runs_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_provider_runs_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_provider_runs",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "signal_radar_provider_runs_artifact_id_signal_radar_analysis_artifacts_artifact_id_fk": {
+          "name": "signal_radar_provider_runs_artifact_id_signal_radar_analysis_artifacts_artifact_id_fk",
+          "tableFrom": "signal_radar_provider_runs",
+          "tableTo": "signal_radar_analysis_artifacts",
+          "columnsFrom": [
+            "artifact_id"
+          ],
+          "columnsTo": [
+            "artifact_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_provider_runs_status_check": {
+          "name": "signal_radar_provider_runs_status_check",
+          "value": "\"signal_radar_provider_runs\".\"status\" IN ('running', 'done', 'failed')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_quality_gates": {
+      "name": "signal_radar_quality_gates",
+      "schema": "",
+      "columns": {
+        "gate_id": {
+          "name": "gate_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "job_id": {
+          "name": "job_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "update_id": {
+          "name": "update_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "memory_id": {
+          "name": "memory_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "evidence_id": {
+          "name": "evidence_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "gate_type": {
+          "name": "gate_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "subject": {
+          "name": "subject",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'watch'"
+        },
+        "evidence_kind": {
+          "name": "evidence_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unknown'"
+        },
+        "evidence_strength": {
+          "name": "evidence_strength",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unknown'"
+        },
+        "verification_status": {
+          "name": "verification_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unverified'"
+        },
+        "source_quality": {
+          "name": "source_quality",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unknown'"
+        },
+        "severity": {
+          "name": "severity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'info'"
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_quality_gates_target_idx": {
+          "name": "signal_radar_quality_gates_target_idx",
+          "columns": [
+            {
+              "expression": "target_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "signal_radar_quality_gates_job_idx": {
+          "name": "signal_radar_quality_gates_job_idx",
+          "columns": [
+            {
+              "expression": "job_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "signal_radar_quality_gates_status_idx": {
+          "name": "signal_radar_quality_gates_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "severity",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "signal_radar_quality_gates_job_id_signal_radar_jobs_job_id_fk": {
+          "name": "signal_radar_quality_gates_job_id_signal_radar_jobs_job_id_fk",
+          "tableFrom": "signal_radar_quality_gates",
+          "tableTo": "signal_radar_jobs",
+          "columnsFrom": [
+            "job_id"
+          ],
+          "columnsTo": [
+            "job_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_quality_gates_target_id_signal_radar_targets_target_id_fk": {
+          "name": "signal_radar_quality_gates_target_id_signal_radar_targets_target_id_fk",
+          "tableFrom": "signal_radar_quality_gates",
+          "tableTo": "signal_radar_targets",
+          "columnsFrom": [
+            "target_id"
+          ],
+          "columnsTo": [
+            "target_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_quality_gates_update_id_signal_radar_memory_updates_update_id_fk": {
+          "name": "signal_radar_quality_gates_update_id_signal_radar_memory_updates_update_id_fk",
+          "tableFrom": "signal_radar_quality_gates",
+          "tableTo": "signal_radar_memory_updates",
+          "columnsFrom": [
+            "update_id"
+          ],
+          "columnsTo": [
+            "update_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_quality_gates_memory_id_signal_radar_memory_records_memory_id_fk": {
+          "name": "signal_radar_quality_gates_memory_id_signal_radar_memory_records_memory_id_fk",
+          "tableFrom": "signal_radar_quality_gates",
+          "tableTo": "signal_radar_memory_records",
+          "columnsFrom": [
+            "memory_id"
+          ],
+          "columnsTo": [
+            "memory_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "signal_radar_quality_gates_evidence_id_signal_radar_evidence_items_evidence_id_fk": {
+          "name": "signal_radar_quality_gates_evidence_id_signal_radar_evidence_items_evidence_id_fk",
+          "tableFrom": "signal_radar_quality_gates",
+          "tableTo": "signal_radar_evidence_items",
+          "columnsFrom": [
+            "evidence_id"
+          ],
+          "columnsTo": [
+            "evidence_id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_quality_gates_status_check": {
+          "name": "signal_radar_quality_gates_status_check",
+          "value": "\"signal_radar_quality_gates\".\"status\" IN ('allow', 'watch', 'skip', 'block', 'needs_agent_recheck')"
+        },
+        "signal_radar_quality_gates_evidence_kind_check": {
+          "name": "signal_radar_quality_gates_evidence_kind_check",
+          "value": "\"signal_radar_quality_gates\".\"evidence_kind\" IN ('hard_evidence', 'weak_evidence', 'rumor', 'speculation', 'contradiction', 'unknown')"
+        },
+        "signal_radar_quality_gates_source_quality_check": {
+          "name": "signal_radar_quality_gates_source_quality_check",
+          "value": "\"signal_radar_quality_gates\".\"source_quality\" IN ('official', 'primary', 'reputable', 'secondary', 'social', 'manual', 'promotional', 'unknown')"
+        },
+        "signal_radar_quality_gates_severity_check": {
+          "name": "signal_radar_quality_gates_severity_check",
+          "value": "\"signal_radar_quality_gates\".\"severity\" IN ('info', 'watch', 'warning', 'critical')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_sources": {
+      "name": "signal_radar_sources",
+      "schema": "",
+      "columns": {
+        "source_id": {
+          "name": "source_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "source_type": {
+          "name": "source_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unknown'"
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "canonical_url": {
+          "name": "canonical_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "credibility_tier": {
+          "name": "credibility_tier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'unknown'"
+        },
+        "quality_score": {
+          "name": "quality_score",
+          "type": "numeric(5, 4)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "profile": {
+          "name": "profile",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_sources_credibility_idx": {
+          "name": "signal_radar_sources_credibility_idx",
+          "columns": [
+            {
+              "expression": "credibility_tier",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "signal_radar_sources_credibility_tier_check": {
+          "name": "signal_radar_sources_credibility_tier_check",
+          "value": "\"signal_radar_sources\".\"credibility_tier\" IN ('official', 'primary', 'reputable', 'secondary', 'social', 'manual', 'promotional', 'unknown')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.signal_radar_targets": {
+      "name": "signal_radar_targets",
+      "schema": "",
+      "columns": {
+        "target_id": {
+          "name": "target_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "namespace": {
+          "name": "namespace",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'public_market'"
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "exchange": {
+          "name": "exchange",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "asset_type": {
+          "name": "asset_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'equity'"
+        },
+        "country": {
+          "name": "country",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "profile": {
+          "name": "profile",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "signal_radar_targets_identity_idx": {
+          "name": "signal_radar_targets_identity_idx",
+          "columns": [
+            {
+              "expression": "namespace",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "symbol",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "COALESCE(\"exchange\", '')",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

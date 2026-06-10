@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -38,14 +38,19 @@ async function main(): Promise<void> {
 }
 
 async function postgresFoundationSmoke(): Promise<void> {
-  const migration = await readFile(
-    path.join(process.cwd(), "db", "migrations", "0001_signal_radar_core.sql"),
+  const drizzleSchema = await readFile(
+    path.join(process.cwd(), "db", "schema.ts"),
     "utf8"
   );
-  const evidenceMigration = await readFile(
-    path.join(process.cwd(), "db", "migrations", "0002_signal_radar_evidence_quality.sql"),
+  const drizzleConfig = await readFile(
+    path.join(process.cwd(), "drizzle.config.ts"),
     "utf8"
   );
+  const drizzleMigrationFiles = (await readdir(path.join(process.cwd(), "drizzle")))
+    .filter((file) => file.endsWith(".sql"))
+    .sort();
+  assertTrue(drizzleMigrationFiles.length >= 1, "missing Drizzle SQL migration");
+  const drizzleMigration = await readFile(path.join(process.cwd(), "drizzle", drizzleMigrationFiles[0]), "utf8");
   const postgresStore = await readFile(
     path.join(process.cwd(), "packages", "signal-radar-core", "src", "postgres-store.ts"),
     "utf8"
@@ -56,15 +61,18 @@ async function postgresFoundationSmoke(): Promise<void> {
     "signal_radar_memory_records",
     "signal_radar_memory_versions"
   ]) {
-    assertTrue(migration.includes(required), `missing Postgres foundation SQL: ${required}`);
+    assertTrue(drizzleSchema.includes(required), `missing Drizzle schema table: ${required}`);
   }
   for (const required of [
     "signal_radar_sources",
     "signal_radar_evidence_items",
     "signal_radar_quality_gates"
   ]) {
-    assertTrue(evidenceMigration.includes(required), `missing evidence/quality SQL: ${required}`);
+    assertTrue(drizzleSchema.includes(required), `missing evidence/quality schema table: ${required}`);
   }
+  assertTrue(drizzleConfig.includes("drizzle-kit"), "database migrations should be managed by drizzle-kit");
+  assertTrue(drizzleMigration.includes("CREATE TABLE"), "Drizzle migration should create product tables");
+  assertTrue(drizzleMigration.includes("signal_radar_job_queue_claim_idx"), "Drizzle migration should include queue claim index");
   assertTrue(postgresStore.includes("FOR UPDATE SKIP LOCKED"), "queue claim must use SKIP LOCKED");
 
   const candidates = buildMemoryRecordCandidates({

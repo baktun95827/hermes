@@ -273,7 +273,8 @@ export async function upsertPostgresTargetByCode(
       SET display_name = $2,
           asset_type = $3,
           country = COALESCE($4, country),
-          profile = profile || $5::jsonb
+          profile = profile || $5::jsonb,
+          updated_at = now()
       WHERE target_id = $1
       `,
       [
@@ -330,7 +331,8 @@ export async function claimNextPostgresJob(
       SET status = 'claimed',
           attempts = attempts + 1,
           locked_by = $2,
-          locked_until = now() + ($3::text || ' seconds')::interval
+          locked_until = now() + ($3::text || ' seconds')::interval,
+          updated_at = now()
       FROM candidate
       WHERE q.queue_id = candidate.queue_id
       RETURNING q.queue_id::text, q.job_id, q.attempts
@@ -346,7 +348,7 @@ export async function claimNextPostgresJob(
     await client.query(
       `
       UPDATE signal_radar_jobs
-      SET status = 'running', started_at = COALESCE(started_at, now()), error = NULL
+      SET status = 'running', started_at = COALESCE(started_at, now()), updated_at = now(), error = NULL
       WHERE job_id = $1
       `,
       [row.job_id]
@@ -491,7 +493,7 @@ export async function updatePostgresAnalysisSummary(
   await queryable.query(
     `
     UPDATE signal_radar_analysis_artifacts
-    SET summary = $2, status = $3
+    SET summary = $2, status = $3, updated_at = now()
     WHERE artifact_id = $1
     `,
     [artifactId, summary, status]
@@ -520,7 +522,7 @@ export async function completePostgresJob(
   await queryable.query(
     `
     UPDATE signal_radar_jobs
-    SET status = 'done', finished_at = now(), result = $2::jsonb, error = NULL
+    SET status = 'done', finished_at = now(), updated_at = now(), result = $2::jsonb, error = NULL
     WHERE job_id = $1
     `,
     [jobId, jsonb(result)]
@@ -528,7 +530,7 @@ export async function completePostgresJob(
   await queryable.query(
     `
     UPDATE signal_radar_job_queue
-    SET status = 'done', locked_until = NULL
+    SET status = 'done', locked_until = NULL, updated_at = now()
     WHERE job_id = $1 AND status = 'claimed'
     `,
     [jobId]
@@ -547,13 +549,15 @@ export async function failPostgresJob(
       SET status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'failed' END,
           available_at = CASE WHEN attempts >= max_attempts THEN available_at ELSE now() + interval '60 seconds' END,
           locked_until = NULL,
-          last_error = $2
+          last_error = $2,
+          updated_at = now()
       WHERE job_id = $1 AND status = 'claimed'
       RETURNING status
     )
     UPDATE signal_radar_jobs
     SET status = CASE WHEN EXISTS (SELECT 1 FROM updated_queue WHERE status = 'dead') THEN 'failed' ELSE 'queued' END,
         failed_at = CASE WHEN EXISTS (SELECT 1 FROM updated_queue WHERE status = 'dead') THEN now() ELSE failed_at END,
+        updated_at = now(),
         error = $2
     WHERE job_id = $1
     `,
@@ -1028,7 +1032,8 @@ async function insertEvidenceSnapshot(
       canonical_url = COALESCE(EXCLUDED.canonical_url, signal_radar_sources.canonical_url),
       credibility_tier = EXCLUDED.credibility_tier,
       quality_score = EXCLUDED.quality_score,
-      profile = signal_radar_sources.profile || EXCLUDED.profile
+      profile = signal_radar_sources.profile || EXCLUDED.profile,
+      updated_at = now()
     `,
     [
       classification.source_id,
@@ -1067,7 +1072,8 @@ async function insertEvidenceSnapshot(
       published_at = EXCLUDED.published_at,
       collected_at = EXCLUDED.collected_at,
       text_excerpt = EXCLUDED.text_excerpt,
-      payload = EXCLUDED.payload
+      payload = EXCLUDED.payload,
+      updated_at = now()
     `,
     [
       item.canonical_id,

@@ -20,6 +20,8 @@ npm run dev
 npm run worker
 ```
 
+If this local database was created before the Drizzle migration switch, reset the development volume once with `docker compose down -v` before running `npm run db:migrate`.
+
 Then open:
 
 ```text

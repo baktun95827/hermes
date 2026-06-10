@@ -232,7 +232,7 @@ async function applyMemoryRecords(
     await client.query(
       `
       UPDATE signal_radar_memory_records
-      SET title = $2, payload = $3::jsonb, current_version = $4, last_update_id = $5
+      SET title = $2, payload = $3::jsonb, current_version = $4, last_update_id = $5, updated_at = now()
       WHERE memory_id = $1
       `,
       [memoryId, candidate.title, jsonb(change.after), nextVersion, options.updateId]
@@ -273,7 +273,9 @@ async function insertMemoryRecord(
       target_id, collection, record_key, title, payload, current_version, last_update_id
     )
     VALUES ($1, $2, $3, $4, '{}'::jsonb, 0, $5)
-    ON CONFLICT (collection, record_key) DO UPDATE SET title = EXCLUDED.title
+    ON CONFLICT (collection, record_key) DO UPDATE SET
+      title = EXCLUDED.title,
+      updated_at = now()
     RETURNING memory_id
     `,
     [options.targetId, candidate.collection, candidate.recordKey, candidate.title, options.updateId]

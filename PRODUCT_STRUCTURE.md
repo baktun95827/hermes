@@ -16,9 +16,13 @@ packages/signal-radar-core/src/
 services/signal-radar-worker/
   TypeScript worker CLI, Postgres queue claim loop, and provider execution layer.
 scripts/
-  TypeScript smoke tests and database migration runner.
-db/migrations/
-  Postgres schema for jobs, queue, collector data, artifacts, memory versions, and audit events.
+  TypeScript smoke and database integration checks.
+db/schema.ts
+  Drizzle source schema for jobs, queue, collector data, evidence, quality gates, artifacts, memory versions, and audit events.
+drizzle/
+  Drizzle-generated SQL migrations and metadata.
+drizzle.config.ts
+  Drizzle Kit configuration for Postgres migrations.
 compose.yaml
   Local Postgres service for development.
 integrations/hermes/
@@ -117,6 +121,14 @@ docker compose up -d postgres
 export DATABASE_URL=postgres://signal_radar:signal_radar@127.0.0.1:5432/signal_radar
 npm run db:migrate
 npm run dev
+```
+
+After the Drizzle migration switch, reset any old local development database that was created by the previous raw SQL runner:
+
+```bash
+docker compose down -v
+docker compose up -d postgres
+npm run db:migrate
 ```
 
 Open:

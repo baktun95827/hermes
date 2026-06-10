@@ -25,6 +25,7 @@ Rules:
 - product runtime state should be Postgres-backed; local files are only a compatibility/debug bridge
 - crawler scheduling is intentionally outside the current foundation
 - memory is agent-written; do not add manual edit workflows to core contracts
+- database schema changes should start in `db/schema.ts` and use Drizzle Kit migration commands
 
 Primary imports:
 
