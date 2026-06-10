@@ -189,23 +189,61 @@ export function normalizeMemoryUpdate(value: unknown): MemoryUpdate {
     event_updates: coerceDictList(raw.event_updates),
     macro_updates: coerceDictList(raw.macro_updates),
     source_assessments: coerceDictList(raw.source_assessments),
-    alert_candidates: coerceDictList(raw.alert_candidates).map((item) => ({
-      ...item,
-      signal_evaluation: buildSignalEvaluation(item)
-    })),
-    contradictions: coerceDictList(raw.contradictions)
+    alert_candidates: coerceDictList(raw.alert_candidates).map(normalizeAgentSignalRow),
+    contradictions: coerceDictList(raw.contradictions).map(normalizeAgentSignalRow)
   };
+}
+
+function normalizeAgentSignalRow(item: Record<string, JsonValue>): Record<string, JsonValue> {
+  const signalEvaluation = buildSignalEvaluation(item);
+  const normalized = { ...item };
+  normalized.contract_version = "agent_output_contract/v1";
+  normalized.subject = cleanText(item.subject ?? item.target ?? item.entity ?? item.topic ?? item.title);
+  normalized.claim = cleanText(item.claim ?? item.summary ?? item.observation ?? item.reason);
+  normalized.claim_id = cleanText(item.claim_id) || stableHashId("claim", [
+    normalized.subject,
+    normalized.claim,
+    item.evidence_item_ids ?? item.tweet_ids ?? item.item_ids
+  ]);
+  normalized.verification_status = normalizeEnum(item.verification_status, VERIFICATION_STATUSES, "unverified");
+  normalized.signal_type = signalEvaluation.signal_type;
+  normalized.novelty_level = signalEvaluation.novelty_level;
+  normalized.evidence_strength = signalEvaluation.evidence_strength;
+  normalized.memory_action = signalEvaluation.memory_action;
+  normalized.alert_level = signalEvaluation.alert_level;
+  normalized.confidence = signalEvaluation.confidence;
+  normalized.risk_reason = cleanText(item.risk_reason ?? item.reason ?? item.uncertainty_reason ?? item.memory_risk_reason);
+  normalized.memory_action_reason = cleanText(item.memory_action_reason ?? item.action_reason);
+  normalized.signal_evaluation = signalEvaluation;
+  normalized.evidence_item_ids = coerceStringList(item.evidence_item_ids ?? item.tweet_ids ?? item.item_ids);
+  normalized.source_ids = coerceStringList(item.source_ids);
+  return normalized;
 }
 
 function normalizeInformationUnit(item: Record<string, JsonValue>): Record<string, JsonValue> {
   const normalized = { ...item };
+  const signalEvaluation = buildSignalEvaluation(item);
+  normalized.contract_version = "agent_output_contract/v1";
   normalized.information_unit_id = stableInformationUnitId(item);
   normalized.cluster_id = cleanText(item.cluster_id);
   normalized.subject = cleanText(item.subject ?? item.target ?? item.entity ?? item.topic);
   normalized.claim = cleanText(item.claim ?? item.summary ?? item.observation);
+  normalized.claim_id = cleanText(item.claim_id) || stableHashId("claim", [
+    normalized.subject,
+    normalized.claim,
+    item.evidence_item_ids ?? item.tweet_ids ?? item.item_ids
+  ]);
   normalized.what_changed = cleanText(item.what_changed);
   normalized.verification_status = normalizeEnum(item.verification_status, VERIFICATION_STATUSES, "unverified");
-  normalized.signal_evaluation = buildSignalEvaluation(item);
+  normalized.signal_type = signalEvaluation.signal_type;
+  normalized.novelty_level = signalEvaluation.novelty_level;
+  normalized.evidence_strength = signalEvaluation.evidence_strength;
+  normalized.memory_action = signalEvaluation.memory_action;
+  normalized.alert_level = signalEvaluation.alert_level;
+  normalized.confidence = signalEvaluation.confidence;
+  normalized.risk_reason = cleanText(item.risk_reason ?? item.reason ?? item.uncertainty_reason ?? item.memory_risk_reason);
+  normalized.memory_action_reason = cleanText(item.memory_action_reason ?? item.action_reason);
+  normalized.signal_evaluation = signalEvaluation;
   normalized.evidence_item_ids = coerceStringList(item.evidence_item_ids ?? item.tweet_ids ?? item.item_ids);
   normalized.source_ids = coerceStringList(item.source_ids);
   return normalized;
@@ -213,12 +251,29 @@ function normalizeInformationUnit(item: Record<string, JsonValue>): Record<strin
 
 function normalizeEventCluster(item: Record<string, JsonValue>): Record<string, JsonValue> {
   const normalized = { ...item };
+  const signalEvaluation = buildSignalEvaluation(item);
+  normalized.contract_version = "agent_output_contract/v1";
   normalized.cluster_id = stableEventClusterId(item);
   normalized.title = cleanText(item.title);
   normalized.summary = cleanText(item.summary);
+  normalized.claim = cleanText(item.claim ?? item.summary);
+  normalized.claim_id = cleanText(item.claim_id) || stableHashId("claim", [
+    normalized.title,
+    normalized.summary,
+    item.evidence_item_ids ?? item.tweet_ids ?? item.item_ids
+  ]);
   normalized.theme = cleanText(item.theme ?? item.primary_theme);
   normalized.secondary_themes = coerceStringList(item.secondary_themes);
-  normalized.signal_evaluation = buildSignalEvaluation(item);
+  normalized.verification_status = normalizeEnum(item.verification_status, VERIFICATION_STATUSES, "unverified");
+  normalized.signal_type = signalEvaluation.signal_type;
+  normalized.novelty_level = signalEvaluation.novelty_level;
+  normalized.evidence_strength = signalEvaluation.evidence_strength;
+  normalized.memory_action = signalEvaluation.memory_action;
+  normalized.alert_level = signalEvaluation.alert_level;
+  normalized.confidence = signalEvaluation.confidence;
+  normalized.risk_reason = cleanText(item.risk_reason ?? item.reason ?? item.uncertainty_reason ?? item.memory_risk_reason);
+  normalized.memory_action_reason = cleanText(item.memory_action_reason ?? item.action_reason);
+  normalized.signal_evaluation = signalEvaluation;
   normalized.evidence_item_ids = coerceStringList(item.evidence_item_ids ?? item.tweet_ids ?? item.item_ids);
   normalized.source_ids = coerceStringList(item.source_ids);
   return normalized;

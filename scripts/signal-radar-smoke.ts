@@ -13,6 +13,8 @@ import {
   diffJson,
   qualityGateFromEvidence,
   qualityGateFromMemoryRow,
+  analyzeMemoryUpdateContract,
+  parseMemoryUpdate,
   writeJsonAtomic,
   type JobStatus
 } from "../packages/signal-radar-core/src";
@@ -202,6 +204,12 @@ async function codexCliProviderSmoke(root: string, configPath: string): Promise<
     const status = await runJob({ jobDir, providerName: "codex-cli", model: "gpt-5.4" });
     assertTrue(status.status === "done", "codex-cli shim job did not finish");
     assertMemoryArtifacts(status, root);
+    const summary = await readText(String(status.paths?.summary));
+    const contractIssues = analyzeMemoryUpdateContract(parseMemoryUpdate(summary));
+    assertTrue(
+      !contractIssues.some((issue) => issue.severity === "error"),
+      `codex-cli shim should satisfy agent output contract: ${JSON.stringify(contractIssues)}`
+    );
     console.log(`ok codex-cli provider shim ${status.job_id}`);
     return status;
   } finally {
@@ -290,6 +298,8 @@ process.stdin.on("end", () => {
       novelty_level: "medium",
       evidence_strength: "single_source",
       memory_action: "write",
+      risk_reason: "Single-source manual note remains unverified.",
+      memory_action_reason: "Record as a weak memory candidate linked to the manual evidence item.",
       alert_level: "watch",
       confidence: 0.35,
       evidence_item_ids: ["manual:codex-shim"],

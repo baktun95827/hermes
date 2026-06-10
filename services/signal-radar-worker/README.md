@@ -6,9 +6,11 @@ Responsibilities:
 
 - create Postgres-backed ingestion jobs
 - claim queued jobs with `FOR UPDATE SKIP LOCKED`
+- recover expired worker leases before claiming work
+- apply retry backoff and dead-letter exhausted jobs
 - build `analysis_input/v1`
 - invoke analyzer providers
-- validate and apply strict `MEMORY_UPDATE`
+- validate `agent_output_contract/v1` fields inside strict `MEMORY_UPDATE`
 - write Postgres memory versions, diffs, audit records, logs, and job status
 
 Queue with fixture provider:

@@ -1,5 +1,6 @@
 export * from "./analysis-input";
 export * from "./config";
+export * from "./drizzle";
 export * from "./evidence";
 export * from "./fs";
 export * from "./json-diff";
@@ -11,5 +12,7 @@ export * from "./pipeline";
 export * from "./postgres";
 export * from "./postgres-memory";
 export * from "./postgres-store";
+export * from "./queue-reliability";
 export * from "./schemas";
+export * from "./target-read-model";
 export * from "./types";

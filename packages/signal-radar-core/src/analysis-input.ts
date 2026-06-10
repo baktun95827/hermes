@@ -224,6 +224,8 @@ function buildAnalyzerPrompt(options: {
     "- 不要编辑文件。",
     "- 明确区分未验证、可信、已确认、重复、噪音。",
     "- MEMORY_UPDATE 必须是 JSON object，可以放在 ```json fenced block 中。",
+    "- MEMORY_UPDATE 中的信息单元、事件簇、alert、contradiction 必须遵守 agent_output_contract/v1。",
+    "- 每条 claim 必须包含：claim、evidence_item_ids、memory_action、confidence、risk_reason。",
     "- 使用 collector item canonical_id 作为 evidence_item_ids。",
     "- 没有价值的内容使用 memory_action=skip。",
     "",

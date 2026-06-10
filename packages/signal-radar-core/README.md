@@ -8,11 +8,13 @@ Owned contracts and behavior:
 - manual text ingestion
 - `analysis_input/v1` construction
 - strict `MEMORY_UPDATE` extraction and normalization
+- `agent_output_contract/v1` normalization and audit checks for claim, evidence links, memory action, confidence, and risk reason
 - useful evidence snapshot and source quality helpers
 - agent quality gates for hard evidence, weak evidence, rumors, speculation, and contradictions
 - Postgres-backed memory application
 - memory record versioning and JSON diff generation
-- Postgres queue claim, job payload, job logs, memory record browsing, target read projection, and version history queries
+- Drizzle-backed read models for target pages, queue reliability, and admin inspection
+- Postgres queue claim, lease recovery, retry backoff, job payload, job logs, memory record browsing, target read model, and version history queries
 - memory audit records
 - artifact path and config handling
 
@@ -26,6 +28,7 @@ Rules:
 - crawler scheduling is intentionally outside the current foundation
 - memory is agent-written; do not add manual edit workflows to core contracts
 - database schema changes should start in `db/schema.ts` and use Drizzle Kit migration commands
+- new read-side product queries should use `createSignalRadarDrizzle`; old transactional worker writes can keep focused `pg` SQL until they are intentionally migrated
 
 Primary imports:
 
@@ -33,6 +36,7 @@ Primary imports:
 import {
   buildAnalysisInput,
   applyMemoryUpdateToPostgres,
+  getPostgresTargetReadModelV1,
   writeManualCollectorBatch
 } from "@/packages/signal-radar-core/src";
 ```

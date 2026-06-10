@@ -12,7 +12,7 @@ app/
 components/
   Product UI components for ingest, status, and job inspection.
 packages/signal-radar-core/src/
-  Runtime-neutral contracts, ingestion, analysis-input, Postgres store, evidence ledger, quality gates, MEMORY_UPDATE, memory versioning, and diff logic.
+  Runtime-neutral contracts, ingestion, analysis-input, Drizzle read models, Postgres store, evidence ledger, quality gates, MEMORY_UPDATE, memory versioning, queue reliability, and diff logic.
 services/signal-radar-worker/
   TypeScript worker CLI, Postgres queue claim loop, and provider execution layer.
 scripts/
@@ -90,9 +90,17 @@ Durable contracts:
 - useful evidence snapshots derived from collector items
 - source quality and evidence quality classifications
 - strict `MEMORY_UPDATE`
+- `agent_output_contract/v1` fields inside agent claims: claim, evidence links, memory action, confidence, and risk reason
+- `target_read_model/v1` API projection: overview, fundamentals, segments, concepts, timeline, evidence, quality gates, and latest changes
 - Postgres-backed memory snapshots and patches for product runtime
 - memory audit records
 - `signal-radar-job/v1`
+
+Runtime database boundary:
+
+- Drizzle Kit owns schema and migrations through `db/schema.ts` and `drizzle/`.
+- New read-side product code should use the typed Drizzle runtime helper in `packages/signal-radar-core/src/drizzle.ts`.
+- Existing worker write paths may keep focused `pg` SQL while they remain transactional and covered by DB smoke tests.
 
 Product code should depend on these JSON contracts, not on agent sessions, browser crawler internals, or compatibility modules.
 
@@ -171,10 +179,14 @@ Admin surfaces:
 
 - `/` manual ingest
 - `/jobs` queue and job operations
+- `/queue` dead letters, failed retries, stale leases, and failure aggregation
 - `/jobs/<job_id>` job artifacts, logs, memory update, and memory versions
 - `/memory` current memory records
 - `/memory/<memory_id>` current payload and version diff history
-- `/api/targets/<code>` basic target read projection for future consumer pages
+- `/evidence` evidence ledger for useful, duplicate, weak, rumor, speculation, and hard-evidence snapshots
+- `/quality` quality gate queue for watch, block, skip, and agent recheck signals
+- `/targets/<code>` basic target read-model skeleton for memory, changes, evidence, and quality signals
+- `/api/targets/<code>` `target_read_model/v1` JSON for future consumer pages
 
 Use Codex CLI intentionally:
 

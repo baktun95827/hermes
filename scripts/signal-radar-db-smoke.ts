@@ -1,7 +1,14 @@
 import {
   createPostgresPool,
   enqueueManualTextJob,
-  getPostgresTargetReadProjection
+  getPostgresEvidenceStats,
+  getPostgresQualityGateStats,
+  getPostgresQueueReliabilityStats,
+  getPostgresTargetReadModelV1,
+  listPostgresEvidenceItems,
+  listPostgresQualityGates,
+  listPostgresQueueEntries,
+  recoverExpiredPostgresJobLeases
 } from "../packages/signal-radar-core/src";
 import { runPostgresWorkerLoop } from "../services/signal-radar-worker/worker";
 
@@ -68,14 +75,76 @@ async function main(): Promise<void> {
     assertTrue(Number(row.evidence_count) >= 1, "DB smoke should write evidence snapshots");
     assertTrue(Number(row.quality_gate_count) >= 2, "DB smoke should write evidence and memory quality gates");
     assertTrue(Number(row.target_count) === 1, "DB smoke should upsert target code");
-    const projection = await getPostgresTargetReadProjection("SAMPLE", pool);
-    assertTrue(projection.target?.symbol === "SAMPLE", "target projection should resolve target code");
-    assertTrue(projection.evidence.length >= 1, "target projection should include evidence");
-    assertTrue(projection.quality_gates.length >= 1, "target projection should include quality gates");
+    const readModel = await getPostgresTargetReadModelV1("SAMPLE", pool);
+    assertTrue(readModel.schema_version === "target_read_model/v1", "target read model should expose v1 schema");
+    assertTrue(readModel.overview.target?.symbol === "SAMPLE", "target read model should resolve target code");
+    assertTrue(Array.isArray(readModel.fundamentals.records), "target read model should include fundamentals section");
+    assertTrue(Array.isArray(readModel.segments.records), "target read model should include segments section");
+    assertTrue(Array.isArray(readModel.concepts.records), "target read model should include concepts section");
+    assertTrue(Array.isArray(readModel.timeline.latest_changes), "target read model should include timeline section");
+    assertTrue(readModel.evidence.length >= 1, "target read model should include evidence");
+    assertTrue(readModel.quality_gates.length >= 1, "target read model should include quality gates");
+    const evidenceItems = await listPostgresEvidenceItems({ targetCode: "SAMPLE" }, pool);
+    const qualityGates = await listPostgresQualityGates({ targetCode: "SAMPLE" }, pool);
+    const evidenceStats = await getPostgresEvidenceStats(pool);
+    const qualityStats = await getPostgresQualityGateStats(pool);
+    assertTrue(evidenceItems.length >= 1, "evidence admin list should resolve target code");
+    assertTrue(qualityGates.length >= 1, "quality admin list should resolve target code");
+    assertTrue(evidenceStats.length >= 1, "evidence admin stats should be available");
+    assertTrue(qualityStats.length >= 1, "quality admin stats should be available");
+    await assertQueueReliability(pool);
     console.log(`ok db smoke ${queued.job_id}`);
   } finally {
     await pool.end();
   }
+}
+
+async function assertQueueReliability(pool: ReturnType<typeof createPostgresPool>): Promise<void> {
+  const deadJobId = `lease_dead_${Date.now()}`;
+  const failedJobId = `lease_failed_${Date.now()}`;
+  await pool.query(
+    `
+    INSERT INTO signal_radar_jobs (job_id, kind, status, provider, model)
+    VALUES
+      ($1, 'manual_text', 'running', 'fixture', 'gpt-5.4'),
+      ($2, 'manual_text', 'running', 'fixture', 'gpt-5.4')
+    `,
+    [deadJobId, failedJobId]
+  );
+  await pool.query(
+    `
+    INSERT INTO signal_radar_job_queue (
+      job_id, queue_name, status, attempts, max_attempts, locked_by,
+      locked_until, last_error, available_at
+    )
+    VALUES
+      ($1, 'analysis', 'claimed', 1, 1, 'expired-worker', now() - interval '10 minutes', NULL, now()),
+      ($2, 'analysis', 'claimed', 1, 3, 'expired-worker', now() - interval '10 minutes', 'previous failure', now())
+    `,
+    [deadJobId, failedJobId]
+  );
+  const recovered = await recoverExpiredPostgresJobLeases({ queueName: "analysis" }, pool);
+  assertTrue(recovered.recovered_count >= 2, "lease recovery should release expired claimed rows");
+  assertTrue(recovered.dead_count >= 1, "lease recovery should move exhausted attempts to dead");
+  assertTrue(recovered.failed_count >= 1, "lease recovery should move retryable attempts to failed");
+  const queueRows = await pool.query<{ job_id: string; status: string; available_in_future: boolean }>(
+    `
+    SELECT job_id, status, available_at > now() AS available_in_future
+    FROM signal_radar_job_queue
+    WHERE job_id IN ($1, $2)
+    ORDER BY job_id
+    `,
+    [deadJobId, failedJobId]
+  );
+  const dead = queueRows.rows.find((item) => item.job_id === deadJobId);
+  const failed = queueRows.rows.find((item) => item.job_id === failedJobId);
+  assertTrue(dead?.status === "dead", "exhausted expired lease should become dead");
+  assertTrue(failed?.status === "failed", "retryable expired lease should become failed");
+  assertTrue(failed?.available_in_future, "retryable expired lease should use backoff");
+  const queueEntries = await listPostgresQueueEntries({ status: "dead" }, pool);
+  const reliability = await getPostgresQueueReliabilityStats({}, pool);
+  assertTrue(queueEntries.some((entry) => entry.job_id === deadJobId), "queue admin list should include dead rows");
+  assertTrue(reliability.failure_groups.length >= 1, "queue reliability stats should include failure groups");
 }
 
 main().catch((error) => {

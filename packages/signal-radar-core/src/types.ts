@@ -92,6 +92,25 @@ export type MemoryUpdate = {
   contradictions: Record<string, JsonValue>[];
 };
 
+export type AgentMemoryAction = "write" | "merge" | "skip" | "supersede" | "reject" | "unknown";
+
+export type AgentOutputClaim = {
+  contract_version: "agent_output_contract/v1";
+  claim_id: string;
+  subject: string;
+  claim: string;
+  evidence_item_ids: string[];
+  source_ids: string[];
+  memory_action: AgentMemoryAction;
+  confidence: number | null;
+  risk_reason: string;
+  verification_status: string;
+  signal_type: string;
+  novelty_level: string;
+  evidence_strength: string;
+  alert_level: string;
+};
+
 export type JobInput = {
   schema_version: "signal-radar-job/v1";
   job_id: string;

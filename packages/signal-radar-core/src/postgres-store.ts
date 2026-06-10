@@ -10,6 +10,7 @@ import {
 } from "./evidence";
 import { buildManualCollectorBatch, timestampSlug } from "./manual-ingest";
 import { getSharedPostgresPool, jsonb, withPostgresTransaction } from "./postgres";
+import { recoverExpiredPostgresJobLeases } from "./queue-reliability";
 import { cleanText } from "./schemas";
 import type { CollectorBatch, CollectorItem, JobStatus, JsonValue } from "./types";
 
@@ -112,6 +113,54 @@ export type PostgresTargetReadProjection = {
   latest_changes: JsonValue[];
   evidence: JsonValue[];
   quality_gates: JsonValue[];
+};
+
+export type PostgresEvidenceListItem = {
+  evidence_id: string;
+  job_id: string | null;
+  target_id: string | null;
+  target_code: string | null;
+  target_display_name: string | null;
+  source_id: string | null;
+  usefulness_status: string;
+  evidence_kind: string;
+  source_quality: string;
+  confidence: number | null;
+  filter_reasons: string[];
+  url: string | null;
+  title: string | null;
+  published_at: string | null;
+  collected_at: string;
+  text_excerpt: string;
+  duplicate_of: string | null;
+  created_at: string;
+};
+
+export type PostgresQualityGateListItem = {
+  gate_id: string;
+  job_id: string | null;
+  target_id: string | null;
+  target_code: string | null;
+  target_display_name: string | null;
+  update_id: string | null;
+  memory_id: string | null;
+  evidence_id: string | null;
+  gate_type: string;
+  subject: string;
+  status: string;
+  evidence_kind: string;
+  evidence_strength: string;
+  verification_status: string;
+  source_quality: string;
+  severity: string;
+  reason: string;
+  created_at: string;
+};
+
+export type PostgresAdminCount = {
+  scope: string;
+  label: string;
+  count: number;
 };
 
 type QueryTarget = Pool | PoolClient;
@@ -313,6 +362,7 @@ export async function claimNextPostgresJob(
   options: { queueName?: string; workerId?: string; lockSeconds?: number } = {},
   poolOrClient: QueryTarget = getSharedPostgresPool()
 ): Promise<ClaimedPostgresJob | null> {
+  await recoverExpiredPostgresJobLeases({ queueName: options.queueName ?? "analysis" }, poolOrClient);
   return withPostgresTransaction(poolOrClient, async (client) => {
     const claimed = await client.query<ClaimedPostgresJob>(
       `
@@ -547,7 +597,10 @@ export async function failPostgresJob(
     WITH updated_queue AS (
       UPDATE signal_radar_job_queue
       SET status = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'failed' END,
-          available_at = CASE WHEN attempts >= max_attempts THEN available_at ELSE now() + interval '60 seconds' END,
+          available_at = CASE
+            WHEN attempts >= max_attempts THEN available_at
+            ELSE now() + (LEAST(3600, GREATEST(60, attempts * attempts * 60))::text || ' seconds')::interval
+          END,
           locked_until = NULL,
           last_error = $2,
           updated_at = now()
@@ -843,6 +896,208 @@ export async function getPostgresTargetReadProjection(
     evidence: evidence.rows.map(normalizeDateRow),
     quality_gates: gates.rows.map(normalizeDateRow)
   };
+}
+
+export async function listPostgresEvidenceItems(
+  options: {
+    usefulnessStatus?: string | null;
+    evidenceKind?: string | null;
+    sourceQuality?: string | null;
+    targetCode?: string | null;
+    limit?: number;
+  } = {},
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<PostgresEvidenceListItem[]> {
+  const rows = await queryable.query<{
+    evidence_id: string;
+    job_id: string | null;
+    target_id: string | null;
+    target_code: string | null;
+    target_display_name: string | null;
+    source_id: string | null;
+    usefulness_status: string;
+    evidence_kind: string;
+    source_quality: string;
+    confidence: number | null;
+    filter_reasons: string[] | null;
+    url: string | null;
+    title: string | null;
+    published_at: Date | string | null;
+    collected_at: Date | string;
+    text_excerpt: string;
+    duplicate_of: string | null;
+    created_at: Date | string;
+  }>(
+    `
+    SELECT e.evidence_id,
+           e.job_id,
+           e.target_id::text,
+           t.symbol AS target_code,
+           t.display_name AS target_display_name,
+           e.source_id,
+           e.usefulness_status,
+           e.evidence_kind,
+           e.source_quality,
+           e.confidence::float8 AS confidence,
+           e.filter_reasons,
+           e.url,
+           e.title,
+           e.published_at,
+           e.collected_at,
+           e.text_excerpt,
+           e.duplicate_of,
+           e.created_at
+    FROM signal_radar_evidence_items e
+    LEFT JOIN signal_radar_targets t ON t.target_id = e.target_id
+    WHERE ($1::text IS NULL OR e.usefulness_status = $1)
+      AND ($2::text IS NULL OR e.evidence_kind = $2)
+      AND ($3::text IS NULL OR e.source_quality = $3)
+      AND (
+        $4::text IS NULL
+        OR lower(t.symbol) = lower($4)
+        OR e.target_id::text = $4
+      )
+    ORDER BY e.created_at DESC
+    LIMIT $5
+    `,
+    [
+      cleanOptional(options.usefulnessStatus),
+      cleanOptional(options.evidenceKind),
+      cleanOptional(options.sourceQuality),
+      cleanOptional(options.targetCode),
+      boundedLimit(options.limit ?? 120)
+    ]
+  );
+
+  return rows.rows.map((row) => ({
+    ...row,
+    confidence: row.confidence === null ? null : Number(row.confidence),
+    filter_reasons: Array.isArray(row.filter_reasons) ? row.filter_reasons.map(String) : [],
+    published_at: row.published_at ? toIso(row.published_at) : null,
+    collected_at: toIso(row.collected_at),
+    created_at: toIso(row.created_at)
+  }));
+}
+
+export async function getPostgresEvidenceStats(
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<PostgresAdminCount[]> {
+  const rows = await queryable.query<{ scope: string; label: string; count: string }>(
+    `
+    SELECT 'usefulness_status' AS scope, usefulness_status AS label, count(*)::text AS count
+    FROM signal_radar_evidence_items
+    GROUP BY usefulness_status
+    UNION ALL
+    SELECT 'evidence_kind' AS scope, evidence_kind AS label, count(*)::text AS count
+    FROM signal_radar_evidence_items
+    GROUP BY evidence_kind
+    UNION ALL
+    SELECT 'source_quality' AS scope, source_quality AS label, count(*)::text AS count
+    FROM signal_radar_evidence_items
+    GROUP BY source_quality
+    ORDER BY scope, label
+    `
+  );
+  return rows.rows.map((row) => ({ scope: row.scope, label: row.label, count: Number(row.count) }));
+}
+
+export async function listPostgresQualityGates(
+  options: {
+    status?: string | null;
+    severity?: string | null;
+    evidenceKind?: string | null;
+    targetCode?: string | null;
+    limit?: number;
+  } = {},
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<PostgresQualityGateListItem[]> {
+  const rows = await queryable.query<{
+    gate_id: string;
+    job_id: string | null;
+    target_id: string | null;
+    target_code: string | null;
+    target_display_name: string | null;
+    update_id: string | null;
+    memory_id: string | null;
+    evidence_id: string | null;
+    gate_type: string;
+    subject: string;
+    status: string;
+    evidence_kind: string;
+    evidence_strength: string;
+    verification_status: string;
+    source_quality: string;
+    severity: string;
+    reason: string;
+    created_at: Date | string;
+  }>(
+    `
+    SELECT q.gate_id::text,
+           q.job_id,
+           q.target_id::text,
+           t.symbol AS target_code,
+           t.display_name AS target_display_name,
+           q.update_id,
+           q.memory_id::text,
+           q.evidence_id,
+           q.gate_type,
+           q.subject,
+           q.status,
+           q.evidence_kind,
+           q.evidence_strength,
+           q.verification_status,
+           q.source_quality,
+           q.severity,
+           q.reason,
+           q.created_at
+    FROM signal_radar_quality_gates q
+    LEFT JOIN signal_radar_targets t ON t.target_id = q.target_id
+    WHERE ($1::text IS NULL OR q.status = $1)
+      AND ($2::text IS NULL OR q.severity = $2)
+      AND ($3::text IS NULL OR q.evidence_kind = $3)
+      AND (
+        $4::text IS NULL
+        OR lower(t.symbol) = lower($4)
+        OR q.target_id::text = $4
+      )
+    ORDER BY q.created_at DESC
+    LIMIT $5
+    `,
+    [
+      cleanOptional(options.status),
+      cleanOptional(options.severity),
+      cleanOptional(options.evidenceKind),
+      cleanOptional(options.targetCode),
+      boundedLimit(options.limit ?? 120)
+    ]
+  );
+
+  return rows.rows.map((row) => ({
+    ...row,
+    created_at: toIso(row.created_at)
+  }));
+}
+
+export async function getPostgresQualityGateStats(
+  queryable: QueryTarget = getSharedPostgresPool()
+): Promise<PostgresAdminCount[]> {
+  const rows = await queryable.query<{ scope: string; label: string; count: string }>(
+    `
+    SELECT 'status' AS scope, status AS label, count(*)::text AS count
+    FROM signal_radar_quality_gates
+    GROUP BY status
+    UNION ALL
+    SELECT 'severity' AS scope, severity AS label, count(*)::text AS count
+    FROM signal_radar_quality_gates
+    GROUP BY severity
+    UNION ALL
+    SELECT 'evidence_kind' AS scope, evidence_kind AS label, count(*)::text AS count
+    FROM signal_radar_quality_gates
+    GROUP BY evidence_kind
+    ORDER BY scope, label
+    `
+  );
+  return rows.rows.map((row) => ({ scope: row.scope, label: row.label, count: Number(row.count) }));
 }
 
 export async function loadPostgresMemoryContext(
@@ -1221,6 +1476,10 @@ function normalizeTargetCode(value: unknown): string {
 function cleanOptional(value: unknown): string | null {
   const text = cleanText(value);
   return text || null;
+}
+
+function boundedLimit(value: number): number {
+  return Math.min(Math.max(Math.floor(value), 1), 500);
 }
 
 function memoryPreview(payload: JsonValue): string {

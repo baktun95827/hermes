@@ -465,6 +465,8 @@ class FixtureProvider implements AnalyzerProvider {
           subject: item?.title || "手动输入材料",
           claim: preview || "手动输入材料需要进一步分析。",
           what_changed: "fixture provider 仅用于链路验证，不做真实研究判断。",
+          risk_reason: "fixture provider 不做真实研究判断，不能作为事实写入。",
+          memory_action_reason: "链路验证输出默认跳过记忆写入。",
           changed_dimensions: ["other"],
           affected_entities: [],
           affected_themes: ["手动输入"],

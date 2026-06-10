@@ -48,11 +48,29 @@ curl -sS http://127.0.0.1:3000/api/jobs/<job_id>
 curl -sS http://127.0.0.1:3000/api/targets/<code>
 ```
 
+`/api/targets/<code>` returns `target_read_model/v1`:
+
+```text
+overview
+fundamentals
+segments
+concepts
+timeline
+evidence
+quality_gates
+latest_changes
+```
+
 Admin pages:
 
+- `/`: manual ingest
 - `/jobs`: job and queue operations
+- `/queue`: dead letters, failed retries, stale leases, and failure groups
 - `/memory`: current memory records
 - `/memory/<memory_id>`: Git-like JSON diff history
+- `/evidence`: evidence ledger
+- `/quality`: quality gate queue
+- `/targets/<code>`: target read-model skeleton
 
 Current product API scope:
 

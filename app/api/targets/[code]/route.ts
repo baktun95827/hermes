@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPostgresTargetReadProjection } from "@/packages/signal-radar-core/src";
+import { getPostgresTargetReadModelV1 } from "@/packages/signal-radar-core/src";
 
 export const runtime = "nodejs";
 
@@ -10,7 +10,7 @@ type TargetRouteProps = {
 export async function GET(_: Request, { params }: TargetRouteProps) {
   try {
     const { code } = await params;
-    const payload = await getPostgresTargetReadProjection(code);
+    const payload = await getPostgresTargetReadModelV1(code);
     return NextResponse.json(payload);
   } catch (error) {
     return NextResponse.json(

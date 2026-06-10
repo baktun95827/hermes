@@ -19,6 +19,7 @@ export function ManualIngestForm() {
     const form = new FormData(event.currentTarget);
     const payload = {
       title: String(form.get("title") ?? ""),
+      target_code: String(form.get("target_code") ?? ""),
       url: String(form.get("url") ?? ""),
       user_label: String(form.get("user_label") ?? "user_note"),
       content_type: String(form.get("content_type") ?? "note"),
@@ -44,6 +45,10 @@ export function ManualIngestForm() {
         <div className="field">
           <label htmlFor="title">标题</label>
           <input id="title" name="title" placeholder="英维克液冷讨论" />
+        </div>
+        <div className="field">
+          <label htmlFor="target_code">标的代码</label>
+          <input id="target_code" name="target_code" placeholder="300750 / NVDA" />
         </div>
         <div className="field">
           <label htmlFor="url">URL</label>

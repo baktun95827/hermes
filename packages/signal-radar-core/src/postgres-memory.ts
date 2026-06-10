@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { qualityGateFromMemoryRow } from "./evidence";
-import { buildMemoryUpdateId, hasParseableMemoryUpdate, parseMemoryUpdate } from "./memory-update";
+import { analyzeMemoryUpdateContract, buildMemoryUpdateId, hasParseableMemoryUpdate, parseMemoryUpdate } from "./memory-update";
 import { buildMemoryRecordCandidates, buildMemoryVersionChange } from "./memory-version";
 import { cleanText } from "./schemas";
 import { getSharedPostgresPool, jsonb, withPostgresTransaction } from "./postgres";
@@ -24,6 +24,7 @@ export async function applyMemoryUpdateToPostgres(
 ): Promise<MemoryApplicationResult> {
   const parsed = parseMemoryUpdate(options.summaryText);
   if (!hasParseableMemoryUpdate(parsed)) throw new Error("no parseable MEMORY_UPDATE found in summary");
+  const contractIssues = analyzeMemoryUpdateContract(parsed);
 
   const updateId = buildMemoryUpdateId({
     summaryText: options.summaryText,
@@ -109,7 +110,24 @@ export async function applyMemoryUpdateToPostgres(
           memory_versions_created: versionCount,
           information_unit_count: parsed.information_units.length,
           event_cluster_count: parsed.event_clusters.length,
-          quality_gate_count: qualityGateCount
+          quality_gate_count: qualityGateCount,
+          contract_issue_count: contractIssues.length
+        })
+      ]
+    );
+    await client.query(
+      `
+      INSERT INTO signal_radar_memory_audit_events (update_id, job_id, event_type, severity, payload)
+      VALUES ($1, $2, 'memory_update.contract_checked', $3, $4::jsonb)
+      `,
+      [
+        updateId,
+        options.jobId ?? null,
+        contractIssues.some((issue) => issue.severity === "error") ? "warn" : "info",
+        jsonb({
+          contract_version: "agent_output_contract/v1",
+          issue_count: contractIssues.length,
+          issues: contractIssues as unknown as JsonValue
         })
       ]
     );
