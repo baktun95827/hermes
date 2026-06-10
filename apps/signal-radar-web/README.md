@@ -13,6 +13,8 @@ Run locally:
 
 ```bash
 npm install
+export DATABASE_URL=postgres://signal_radar:signal_radar@127.0.0.1:5432/signal_radar
+npm run db:migrate
 npm run dev
 ```
 
@@ -42,6 +44,6 @@ curl -sS http://127.0.0.1:3000/api/jobs/<job_id>
 Environment variables:
 
 - `XRADAR_CONFIG`: config path, defaults to `signal-radar.config.json`
-- `XRADAR_JOBS_DIR`: jobs directory, defaults to `data/jobs`
+- `DATABASE_URL`: Postgres connection string. Required for the product runtime.
 - `XRADAR_ANALYZER_PROVIDER`: `fixture` or `codex-cli`, defaults to `fixture`
 - `XRADAR_CODEX_MODEL`: Codex model, defaults to `gpt-5.4`

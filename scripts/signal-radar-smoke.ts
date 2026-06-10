@@ -7,6 +7,8 @@ import {
 } from "../services/signal-radar-worker/worker";
 import {
   applyMemoryUpdate,
+  buildMemoryRecordCandidates,
+  diffJson,
   writeJsonAtomic,
   type JobStatus
 } from "../packages/signal-radar-core/src";
@@ -20,6 +22,7 @@ async function main(): Promise<void> {
   console.log(`temp_root=${tempRoot}`);
   try {
     const configPath = await writeConfig(tempRoot);
+    await postgresFoundationSmoke();
     await uniqueJobIdCheck(tempRoot, configPath);
     await workerFixtureSmoke(tempRoot, configPath);
     await codexCliProviderSmoke(tempRoot, configPath);
@@ -28,6 +31,60 @@ async function main(): Promise<void> {
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
+}
+
+async function postgresFoundationSmoke(): Promise<void> {
+  const migration = await readFile(
+    path.join(process.cwd(), "db", "migrations", "0001_signal_radar_core.sql"),
+    "utf8"
+  );
+  const postgresStore = await readFile(
+    path.join(process.cwd(), "packages", "signal-radar-core", "src", "postgres-store.ts"),
+    "utf8"
+  );
+  for (const required of [
+    "signal_radar_jobs",
+    "signal_radar_job_queue",
+    "signal_radar_memory_records",
+    "signal_radar_memory_versions"
+  ]) {
+    assertTrue(migration.includes(required), `missing Postgres foundation SQL: ${required}`);
+  }
+  assertTrue(postgresStore.includes("FOR UPDATE SKIP LOCKED"), "queue claim must use SKIP LOCKED");
+
+  const candidates = buildMemoryRecordCandidates({
+    primary_themes: ["AI infrastructure"],
+    secondary_themes: { "AI infrastructure": ["liquid cooling"] },
+    account_notes: { analyst_a: "Tracks supply-chain claims." },
+    information_units: [
+      {
+        information_unit_id: "info:sample",
+        subject: "SampleCo",
+        claim: "SampleCo demand is being discussed.",
+        signal_evaluation: {
+          memory_action: "write"
+        }
+      }
+    ],
+    event_clusters: [],
+    signal_evaluations: [],
+    entity_updates: [],
+    event_updates: [],
+    macro_updates: [],
+    source_assessments: [],
+    alert_candidates: [],
+    contradictions: []
+  });
+  assertTrue(candidates.length >= 3, "memory candidates should include theme, account, and information unit");
+  const diff = diffJson(
+    { subject: "SampleCo", confidence: 0.2 },
+    { subject: "SampleCo", confidence: 0.5, verification_status: "plausible" }
+  );
+  const nullDiff = diffJson({ value: null }, { value: "known" });
+  assertTrue(diff.some((item) => item.path === "/confidence"), "memory diff should include changed confidence");
+  assertTrue(diff.some((item) => item.path === "/verification_status"), "memory diff should include added field");
+  assertTrue(nullDiff.some((item) => item.path === "/value" && item.op === "replace"), "memory diff should preserve null as a value");
+  console.log("ok Postgres foundation schema/diff");
 }
 
 async function writeConfig(root: string): Promise<string> {

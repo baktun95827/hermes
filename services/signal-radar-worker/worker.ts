@@ -1,16 +1,28 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import {
+  appendPostgresJobLog,
+  applyMemoryUpdateToPostgres,
   buildArtifactPaths,
+  buildAnalysisInputPayload,
+  claimNextPostgresJob,
+  completePostgresJob,
   DEFAULT_CONFIG_PATH,
   DEFAULT_JOBS_DIR,
+  enqueueManualTextJob,
+  failPostgresJob,
+  insertPostgresAnalysisArtifact,
+  loadPostgresJobForRun,
+  loadPostgresMemoryContext,
   loadConfig,
   readJsonFile,
   readTextIfExists,
   timestampSlug,
+  updatePostgresAnalysisSummary,
   writeJsonAtomic,
   writeManualCollectorBatch,
   writeTextAtomic,
@@ -238,6 +250,145 @@ export async function getJobPayload(jobId: string, jobsDir = process.env.XRADAR_
     } as unknown as JsonValue,
     log_tail: logTail
   };
+}
+
+export async function runNextPostgresJob(options: {
+  queueName?: string;
+  workerId?: string;
+  providerName?: string;
+  model?: string;
+} = {}): Promise<JobStatus | null> {
+  const claimed = await claimNextPostgresJob({
+    queueName: options.queueName ?? "analysis",
+    workerId: options.workerId ?? `worker:${process.pid}`
+  });
+  if (!claimed) return null;
+  return runPostgresJob({
+    jobId: claimed.job_id,
+    providerName: options.providerName,
+    model: options.model
+  });
+}
+
+export async function runPostgresJob(options: {
+  jobId: string;
+  providerName?: string;
+  model?: string;
+}): Promise<JobStatus> {
+  let artifactId = "";
+  let tempDir = "";
+  const startedAt = utcNowIso();
+  try {
+    const job = await loadPostgresJobForRun(options.jobId);
+    if (!job) throw new Error(`job not found: ${options.jobId}`);
+
+    const provider = getProvider(options.providerName ?? job.provider ?? process.env.XRADAR_ANALYZER_PROVIDER ?? "fixture");
+    const model = options.model ?? job.model ?? process.env.XRADAR_CODEX_MODEL ?? "gpt-5.4";
+    const memoryContext = await loadPostgresMemoryContext();
+    const built = buildAnalysisInputPayload({
+      collectorBatch: job.collector_batch,
+      memoryContext
+    });
+    artifactId = await insertPostgresAnalysisArtifact({
+      jobId: job.job_id,
+      provider: provider.name,
+      model,
+      runId: built.run_id,
+      status: "running",
+      analysisInput: {
+        schema_version: built.schema_version,
+        run_id: built.run_id,
+        generated_at: built.generated_at,
+        collector_batch: built.collector_batch
+      } as Record<string, JsonValue>,
+      memoryContext,
+      rawReport: built.raw_report,
+      prompt: built.prompt,
+      report: built.report,
+      runMetrics: {
+        item_count: built.item_count,
+        recommendation_count: built.recommendation_count,
+        keyword_count: built.keyword_count
+      },
+      generatedAt: built.generated_at
+    });
+
+    tempDir = await mkdtemp(path.join(os.tmpdir(), "signal-radar-db-job-"));
+    const promptPath = path.join(tempDir, "prompt.txt");
+    const summaryPath = path.join(tempDir, "summary.txt");
+    await writeTextAtomic(promptPath, built.prompt);
+    await provider.generate({
+      promptPath,
+      outputPath: summaryPath,
+      jobDir: tempDir,
+      jobInput: {
+        schema_version: "signal-radar-job/v1",
+        job_id: job.job_id,
+        created_at: startedAt,
+        kind: "manual_text",
+        config_path: "postgres",
+        collector_batch_path: `postgres://signal_radar_collector_batches/${built.run_id}`,
+        title: null,
+        url: null,
+        user_label: null,
+        input_channel: "worker",
+        content_type: "note",
+        requires_verification: false
+      },
+      collectorBatch: job.collector_batch,
+      model
+    });
+
+    const summary = await readTextIfExists(summaryPath);
+    await updatePostgresAnalysisSummary(artifactId, summary, "done");
+    const memoryResult = await applyMemoryUpdateToPostgres({
+      jobId: job.job_id,
+      artifactId,
+      targetId: job.target_id,
+      runId: built.run_id,
+      summaryText: summary,
+      summaryPath: `postgres://signal_radar_analysis_artifacts/${artifactId}/summary`
+    });
+    const workerLog = await readTextIfExists(path.join(tempDir, "worker.log"));
+    if (workerLog) {
+      await appendPostgresJobLog(job.job_id, {
+        action: "provider.log",
+        stdout: workerLog
+      });
+    }
+    await completePostgresJob(job.job_id, {
+      artifact_id: artifactId,
+      update_id: memoryResult.update_id,
+      memory_versions_created: memoryResult.memory_updates
+    });
+    return {
+      job_id: job.job_id,
+      status: "done",
+      started_at: startedAt,
+      finished_at: utcNowIso(),
+      updated_at: utcNowIso(),
+      provider: provider.name,
+      model,
+      memory_update: {
+        update_id: memoryResult.update_id,
+        memory_versions_created: memoryResult.memory_updates
+      }
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (artifactId) await updatePostgresAnalysisSummary(artifactId, "", "failed");
+    await failPostgresJob(options.jobId, message);
+    return {
+      job_id: options.jobId,
+      status: "failed",
+      started_at: startedAt,
+      failed_at: utcNowIso(),
+      updated_at: utcNowIso(),
+      error: message
+    };
+  } finally {
+    if (tempDir) await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 type ProviderGenerateOptions = {
@@ -495,6 +646,33 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${jobDir}\n`);
     return 0;
   }
+  if (command === "enqueue-ingest-text") {
+    const text = await readTextArg(stringArg(parsed.text), stringArg(parsed["text-file"]));
+    const result = await enqueueManualTextJob({
+      text,
+      title: stringArg(parsed.title),
+      url: stringArg(parsed.url),
+      userLabel: stringArg(parsed["user-label"]),
+      inputChannel: stringArg(parsed["input-channel"]) ?? "cli",
+      contentType: stringArg(parsed["content-type"]) ?? "note",
+      requiresVerification: Boolean(parsed["requires-verification"]),
+      provider: stringArg(parsed.provider) ?? "fixture",
+      model: stringArg(parsed.model) ?? "gpt-5.4",
+      priority: parsed.priority ? Number(parsed.priority) : 0
+    });
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return 0;
+  }
+  if (command === "db-work-once") {
+    const status = await runNextPostgresJob({
+      queueName: stringArg(parsed.queue) ?? "analysis",
+      workerId: stringArg(parsed["worker-id"]),
+      providerName: stringArg(parsed.provider),
+      model: stringArg(parsed.model)
+    });
+    process.stdout.write(`${JSON.stringify(status ?? { status: "idle" }, null, 2)}\n`);
+    return status?.status === "failed" ? 1 : 0;
+  }
   if (command === "run-job") {
     const jobDir = stringArg(parsed["job-dir"]);
     if (!jobDir) throw new Error("--job-dir is required");
@@ -507,7 +685,7 @@ async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return status.status === "done" ? 0 : 1;
   }
-  process.stderr.write("Usage: npm run signal-radar -- <ingest-text|run-job> [options]\n");
+  process.stderr.write("Usage: npm run signal-radar -- <ingest-text|enqueue-ingest-text|run-job|db-work-once> [options]\n");
   return 2;
 }
 

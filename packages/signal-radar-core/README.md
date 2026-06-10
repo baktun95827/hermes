@@ -8,7 +8,8 @@ Owned contracts and behavior:
 - manual text ingestion
 - `analysis_input/v1` construction
 - strict `MEMORY_UPDATE` extraction and normalization
-- file-backed memory application
+- Postgres-backed memory application
+- memory record versioning and JSON diff generation
 - memory audit records
 - artifact path and config handling
 
@@ -18,13 +19,14 @@ Rules:
 - no external agent session dependency
 - no provider-specific LLM code
 - deterministic functions should run in smoke tests without network or credentials
+- product runtime state should be Postgres-backed; local files are only a compatibility/debug bridge
 
 Primary imports:
 
 ```ts
 import {
   buildAnalysisInput,
-  applyMemoryUpdate,
+  applyMemoryUpdateToPostgres,
   writeManualCollectorBatch
 } from "@/packages/signal-radar-core/src";
 ```

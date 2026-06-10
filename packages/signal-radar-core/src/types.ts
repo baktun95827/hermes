@@ -11,7 +11,7 @@ export type SignalRadarConfig = {
   discovery: { enabled: boolean; min_interactions: number };
   scroll_count: number;
   delay_between_accounts: number;
-  memory_backend: "file";
+  memory_backend: "postgres" | "file";
   state_file: string;
   memory_dir: string;
   output_dir: string;

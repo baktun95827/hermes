@@ -5,6 +5,21 @@ import { pathExists, readJsonFile, writeJsonAtomic, writeTextAtomic } from "./fs
 import { cleanText } from "./schemas";
 import type { AnalysisInputBuildResult, CollectorBatch, JsonValue } from "./types";
 
+export type BuiltAnalysisInputPayload = {
+  schema_version: "analysis_input/v1";
+  run_id: string;
+  generated_at: string;
+  collector_batch: CollectorBatch;
+  memory_context: Record<string, JsonValue>;
+  raw_report: string;
+  prompt: string;
+  report_title: string;
+  report: string;
+  item_count: number;
+  recommendation_count: number;
+  keyword_count: number;
+};
+
 export async function buildAnalysisInput(options: {
   configPath: string;
   collectorBatchPath?: string | null;
@@ -17,32 +32,27 @@ export async function buildAnalysisInput(options: {
   if (!collectorBatch) throw new Error(`collector batch not found: ${collectorBatchPath}`);
 
   const runId = collectorBatch.collector_run_id;
-  const generatedAt = new Date().toISOString();
   const paths = buildArtifactPaths(config.output_dir, runId);
   const memoryContext = await buildMemoryContext(config.memory_dir);
-  const rawReport = formatRawReport(collectorBatch);
-  const historyContext = formatHistoryContext(memoryContext);
-  const prompt = buildAnalyzerPrompt({
-    reportTitle: reportTitleForCollector(collectorBatch, generatedAt),
-    rawReport,
-    historyContext,
-    collectorBatch
+  const built = buildAnalysisInputPayload({
+    collectorBatch,
+    memoryContext
   });
 
   const analysisInput = {
     schema_version: "analysis_input/v1",
-    run_id: runId,
-    generated_at: generatedAt,
+    run_id: built.run_id,
+    generated_at: built.generated_at,
     collector_batch_path: collectorBatchPath,
     collector_batch: collectorBatch,
     memory_context: memoryContext,
-    raw_report: rawReport,
+    raw_report: built.raw_report,
     prompt_path: paths.prompt,
     report_path: paths.report
   };
   const runMetrics = {
     run_id: runId,
-    generated_at: generatedAt,
+    generated_at: built.generated_at,
     source: collectorBatch.source,
     item_count: collectorBatch.items.length,
     warnings: collectorBatch.warnings,
@@ -54,12 +64,12 @@ export async function buildAnalysisInput(options: {
   };
 
   await writeJsonAtomic(paths.analysis_input, analysisInput);
-  await writeTextAtomic(paths.prompt, prompt);
-  await writeTextAtomic(paths.report, `${reportTitleForCollector(collectorBatch, generatedAt)}\n\n${rawReport}`);
+  await writeTextAtomic(paths.prompt, built.prompt);
+  await writeTextAtomic(paths.report, built.report);
   await writeJsonAtomic(paths.run_metrics, runMetrics);
   await writeLatestManifest(config.latest_run_file, {
     run_id: runId,
-    generated_at: generatedAt,
+    generated_at: built.generated_at,
     paths: {
       collector_batch: collectorBatchPath,
       analysis_input: paths.analysis_input,
@@ -71,13 +81,44 @@ export async function buildAnalysisInput(options: {
 
   return {
     run_id: runId,
-    generated_at: generatedAt,
+    generated_at: built.generated_at,
     collector_batch_path: collectorBatchPath,
     analysis_input_path: paths.analysis_input,
     prompt_path: paths.prompt,
     report_path: paths.report,
     run_metrics_path: paths.run_metrics,
     item_count: collectorBatch.items.length,
+    recommendation_count: 0,
+    keyword_count: 0
+  };
+}
+
+export function buildAnalysisInputPayload(options: {
+  collectorBatch: CollectorBatch;
+  memoryContext?: Record<string, JsonValue>;
+  generatedAt?: string;
+}): BuiltAnalysisInputPayload {
+  const generatedAt = options.generatedAt ?? new Date().toISOString();
+  const memoryContext = options.memoryContext ?? {};
+  const rawReport = formatRawReport(options.collectorBatch);
+  const reportTitle = reportTitleForCollector(options.collectorBatch, generatedAt);
+  const prompt = buildAnalyzerPrompt({
+    reportTitle,
+    rawReport,
+    historyContext: formatHistoryContext(memoryContext),
+    collectorBatch: options.collectorBatch
+  });
+  return {
+    schema_version: "analysis_input/v1",
+    run_id: options.collectorBatch.collector_run_id,
+    generated_at: generatedAt,
+    collector_batch: options.collectorBatch,
+    memory_context: memoryContext,
+    raw_report: rawReport,
+    prompt,
+    report_title: reportTitle,
+    report: `${reportTitle}\n\n${rawReport}`,
+    item_count: options.collectorBatch.items.length,
     recommendation_count: 0,
     keyword_count: 0
   };

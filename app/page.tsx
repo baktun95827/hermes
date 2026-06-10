@@ -1,10 +1,10 @@
 import Link from "next/link";
-import { readdir } from "node:fs/promises";
-import path from "node:path";
 import { FileText, ListChecks, Radar } from "lucide-react";
 import { ManualIngestForm } from "@/components/manual-ingest-form";
 import { StatusPill } from "@/components/status-pill";
-import { DEFAULT_JOBS_DIR, readJsonFile, type JobStatus } from "@/packages/signal-radar-core/src";
+import { getDatabaseUrl, listRecentPostgresJobs, type JobStatus } from "@/packages/signal-radar-core/src";
+
+export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const jobs = await recentJobs();
@@ -65,20 +65,9 @@ export default async function HomePage() {
 }
 
 async function recentJobs(): Promise<JobStatus[]> {
+  if (!getDatabaseUrl()) return [];
   try {
-    const entries = await readdir(DEFAULT_JOBS_DIR, { withFileTypes: true });
-    const jobs: JobStatus[] = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const status = await readJsonFile<JobStatus | null>(
-        path.join(DEFAULT_JOBS_DIR, entry.name, "status.json"),
-        null
-      );
-      if (status?.job_id) jobs.push(status);
-    }
-    return jobs
-      .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))
-      .slice(0, 8);
+    return listRecentPostgresJobs(8);
   } catch {
     return [];
   }

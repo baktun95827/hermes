@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { JobDetail } from "@/components/job-detail";
-import { getJobPayload, validateJobId } from "@/services/signal-radar-worker/worker";
+import { getPostgresJobPayload } from "@/packages/signal-radar-core/src";
+import { validateJobId } from "@/services/signal-radar-worker/worker";
 
 type JobPageProps = {
   params: Promise<{ jobId: string }>;
@@ -16,7 +17,7 @@ export default async function JobPage({ params }: JobPageProps) {
   } catch {
     notFound();
   }
-  const payload = await getJobPayload(safeJobId);
+  const payload = await getPostgresJobPayload(safeJobId);
   if (!payload) notFound();
 
   return (

@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   cacheComponents: false,
-  serverExternalPackages: ["yaml"]
+  serverExternalPackages: ["pg", "yaml"]
 };
 
 export default nextConfig;

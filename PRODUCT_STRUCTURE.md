@@ -12,11 +12,13 @@ app/
 components/
   Product UI components for ingest, status, and job inspection.
 packages/signal-radar-core/src/
-  Runtime-neutral contracts, ingestion, analysis-input, MEMORY_UPDATE, memory, and audit logic.
+  Runtime-neutral contracts, ingestion, analysis-input, Postgres store, MEMORY_UPDATE, memory versioning, and diff logic.
 services/signal-radar-worker/
-  TypeScript worker CLI and provider execution layer.
+  TypeScript worker CLI, Postgres queue claim loop, and provider execution layer.
 scripts/
-  TypeScript smoke tests.
+  TypeScript smoke tests and database migration runner.
+db/migrations/
+  Postgres schema for jobs, queue, collector data, artifacts, memory versions, and audit events.
 integrations/hermes/
   Optional external adapter. It is not part of the product runtime.
 data/
@@ -57,16 +59,19 @@ Postgres should become the durable product store for:
 - diffable memory version history
 - target concepts, business segments, industry-chain relations, timelines, and macro/policy context
 
+The local file artifact path is no longer a product constraint. It can remain as a temporary provider/debug bridge, but the durable runtime state should be Postgres-first.
+
 ## Runtime Boundary
 
 The product mainline is:
 
 ```text
 Next.js UI/API
--> services/signal-radar-worker/worker.ts
+-> Postgres job queue
+-> services/signal-radar-worker/worker.ts db-work-once
 -> packages/signal-radar-core/src
 -> fixture provider or Codex CLI provider
--> TypeScript MEMORY_UPDATE apply/audit path
+-> Postgres MEMORY_UPDATE version/diff/audit path
 ```
 
 Durable contracts:
@@ -75,7 +80,6 @@ Durable contracts:
 - `collector_item/v1`
 - `analysis_input/v1`
 - strict `MEMORY_UPDATE`
-- file-backed memory artifacts during local development
 - Postgres-backed memory snapshots and patches for product runtime
 - memory audit records
 - `signal-radar-job/v1`
@@ -95,6 +99,8 @@ npm install
 Run the product UI:
 
 ```bash
+export DATABASE_URL=postgres://signal_radar:signal_radar@127.0.0.1:5432/signal_radar
+npm run db:migrate
 npm run dev
 ```
 
@@ -104,14 +110,18 @@ Open:
 http://127.0.0.1:3000
 ```
 
-Run a manual text job with the fixture provider:
+Queue a manual text job with the fixture provider:
 
 ```bash
-npm run signal-radar -- ingest-text \
+npm run signal-radar -- enqueue-ingest-text \
   --text "英维克液冷业务被市场重新讨论，但需要公告或订单验证。" \
-  --config signal-radar.config.json \
-  --run \
   --provider fixture
+```
+
+Process one queued job:
+
+```bash
+npm run signal-radar -- db-work-once
 ```
 
 Run smoke validation:
@@ -128,7 +138,7 @@ Use Codex CLI intentionally:
 XRADAR_ANALYZER_PROVIDER=codex-cli npm run dev
 ```
 
-By default, product runtime state writes under ignored `data/signal-radar/`.
+By default, product runtime state expects `DATABASE_URL`. Ignored `data/` artifacts are only a temporary compatibility/debug path.
 
 ## Deployment Shape
 
