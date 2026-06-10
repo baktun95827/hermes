@@ -15,7 +15,7 @@ Owned contracts and behavior:
 Rules:
 
 - no React or Web framework dependency
-- no Hermes session dependency
+- no external agent session dependency
 - no provider-specific LLM code
 - deterministic functions should run in smoke tests without network or credentials
 
@@ -29,4 +29,4 @@ import {
 } from "@/packages/signal-radar-core/src";
 ```
 
-The product path should call this package directly through TypeScript imports. It should not shell out to legacy Python compatibility modules.
+The product path should call this package directly through TypeScript imports. It should not shell out to legacy compatibility modules.

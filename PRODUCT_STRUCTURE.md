@@ -1,6 +1,6 @@
 # Signal Radar Product Structure
 
-Signal Radar is now a TypeScript-first Next.js product. The former Python MVP has been migrated into a Next.js 16.2 application plus shared TypeScript runtime modules.
+Signal Radar is a TypeScript-first Next.js product. The product runtime lives in the root app, worker, and shared TypeScript package.
 
 ## Current Layout
 
@@ -16,9 +16,7 @@ services/signal-radar-worker/
 scripts/
   TypeScript smoke tests.
 integrations/hermes/
-  Optional Hermes integration notes.
-skills/signal-radar/
-  Skill metadata, config, collector contracts, memory files, and references.
+  Optional external adapter. It is not part of the product runtime.
 data/
   Local runtime data for development. Do not commit real runtime job output.
 ```
@@ -45,7 +43,7 @@ Durable contracts:
 - memory audit records
 - `signal-radar-job/v1`
 
-New product code should depend on these JSON contracts, not on Hermes sessions, browser crawler internals, or Python compatibility modules.
+Product code should depend on these JSON contracts, not on agent sessions, browser crawler internals, or compatibility modules.
 
 ## Commands
 
@@ -98,8 +96,9 @@ By default, product runtime state writes under ignored `data/signal-radar/`.
 Keep runtime credentials and product code separate:
 
 ```text
-/opt/xradar/              # product code
-/opt/hermes/ or ~/.hermes # optional Hermes runtime, sessions, auth, gateway state
+/opt/xradar/ # product code
 ```
 
-The Next.js app must not store Hermes/Codex OAuth state. If Codex CLI is used, it is invoked server-side by the worker provider and returns structured artifacts.
+The repository root intentionally does not carry agent persona files, gateway state, cron locks, bundled skill catalogs, or OAuth state. If an external agent runtime is used, install the thin adapter from `integrations/hermes/skills/signal-radar/` into that runtime and keep its sessions, credentials, logs, and caches outside this repo.
+
+If Codex CLI is used, it is invoked server-side by the worker provider and returns structured artifacts.

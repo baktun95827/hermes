@@ -1,39 +1,14 @@
-# Hermes 源代码（已在 GitHub 公开）
-hermes-agent/
-
-# 敏感凭证
-auth.json
-auth.lock
-*.tw_session
-sessions/
-
-# 缓存和临时文件
-cache/
-image_cache/
-audio_cache/
-logs/
+# Local secrets and runtime state
+.env
 *.pid
-
-# 数据库文件（太大且会频繁变动）
+logs/
+cache/
+sessions/
 state.db
 state.db-shm
 state.db-wal
-.env
-skills/signal-radar/cookies.json
-skills/signal-radar/1.py
-skills/signal-radar/debug_kaboruo.png
-# legacy root state file; synced state now lives at skills/signal-radar/memory/state.json
-skills/signal-radar/state.json
-skills/signal-radar/memory/.write.lock
-skills/signal-radar/latest_run.json
-skills/signal-radar/reports/
-skills/signal-radar/debug_*.png
-skills/signal-radar/__pycache__/
-channel_directory.json
-channel_directory.json
-
-
 __pycache__/
+*.pyc
 
 # Node / Next.js
 node_modules/
