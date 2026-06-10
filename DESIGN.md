@@ -4,6 +4,10 @@
 
 Signal Radar uses a restrained product interface for research operations. The visual system should support repeated scanning of job state, summaries, JSON artifacts, and audit results.
 
+The current UI is an admin/operator surface. It should help developers and operators inspect ingestion, queue state, agent output, memory updates, version diffs, audit records, and failures. It is not the final consumer product UI.
+
+The future consumer UI should be target-centric and closer to a market terminal or TradingView research page than an admin console. A target page should organize fundamentals, business segments, industry-chain position, related concepts, key events, source evidence, market awareness, and live macro/policy context into navigable tabs.
+
 ## Color
 
 Strategy: restrained, with deep moss as the primary action and status anchor.
@@ -33,6 +37,8 @@ Use a system sans stack for all product UI. Use fixed rem sizes, not fluid viewp
 
 Use a persistent top bar, a constrained main workspace, and responsive two-column layouts for input plus run status. Detail pages should prioritize summary, memory update, audit, and logs in clearly separated sections.
 
+Admin layouts should be dense, scan-friendly, and optimized for exception handling. Consumer layouts should be target-first: symbol/name header, current state, material changes, and tabbed deep dives.
+
 ## Components
 
 - Primary buttons use moss fill with white text.
@@ -40,6 +46,8 @@ Use a persistent top bar, a constrained main workspace, and responsive two-colum
 - Forms use standard inputs, visible labels, and clear validation messages.
 - Artifact panels use monospace pre blocks with horizontal overflow when needed.
 - Status pills use semantic colors and plain labels.
+- Diff viewers should make memory history feel Git-like: before/after, changed fields, source evidence, provider run, timestamp, and rollback affordance.
+- Target tabs should support fundamentals, segments, concepts, timeline, industry chain, market recognition, macro context, and source evidence.
 
 ## Motion
 
