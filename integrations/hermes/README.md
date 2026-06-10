@@ -1,14 +1,15 @@
 # Hermes Integration
 
-Hermes is a worker/runtime integration for Signal Radar, not the product core.
+Hermes is now an optional integration for the TypeScript Signal Radar product, not the product core.
 
-Current active skill:
+Current product runtime:
 
 ```text
-skills/signal-radar/
+npm run dev
+npm run signal-radar -- ingest-text ...
 ```
 
-Future active adapter:
+Future Hermes adapter location:
 
 ```text
 integrations/hermes/skills/signal-radar/
@@ -17,21 +18,13 @@ integrations/hermes/skills/signal-radar/
 The adapter should stay thin:
 
 - expose `SKILL.md`
-- provide Hermes-compatible CLI entrypoints
-- call `packages/signal-radar-core`
-- write/read artifacts through the standard contracts
-
-For now, do not duplicate the active skill here. Once `packages/signal-radar-core` is extracted, move or recreate a thin Hermes adapter under `integrations/hermes/skills/signal-radar` and install it with:
-
-```bash
-ln -s /opt/xradar/integrations/hermes/skills/signal-radar \
-      ~/.hermes/skills/signal-radar
-```
+- call `npm run signal-radar`
+- read/write standard artifacts through TypeScript contracts
+- avoid carrying runtime credentials inside the product repo
 
 Do not put Hermes runtime state here:
 
 - sessions
 - gateway state
 - OAuth/Codex credentials
-- runtime memory stores
-- logs and caches
+- runtime logs and caches

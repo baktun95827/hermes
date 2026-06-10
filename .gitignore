@@ -35,6 +35,12 @@ channel_directory.json
 
 __pycache__/
 
+# Node / Next.js
+node_modules/
+.next/
+tsconfig.tsbuildinfo
+npm-debug.log*
+
 # Product-mode local runtime data
 /data/*
 !/data/.gitignore

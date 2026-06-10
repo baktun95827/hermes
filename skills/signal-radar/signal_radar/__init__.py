@@ -1,1 +1,0 @@
-"""Signal Radar implementation modules."""

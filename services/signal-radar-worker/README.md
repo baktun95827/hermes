@@ -1,61 +1,44 @@
 # Signal Radar Worker
 
-This directory is reserved for background execution.
+The worker is now TypeScript and runs through `tsx`.
 
-The worker owns:
+Responsibilities:
 
-- reading queued ingestion jobs
-- building `analysis_input/v1`
-- invoking the analyzer provider
-- validating strict `MEMORY_UPDATE`
-- applying memory through `MemoryBackend`
-- writing audit records and job results
+- create ingestion jobs
+- build `analysis_input/v1`
+- invoke analyzer providers
+- validate and apply strict `MEMORY_UPDATE`
+- write audit records and job status
 
-For MVP, the analyzer provider is either `fixture` or `codex-cli`. Hermes is intentionally not in the product mainline; it remains a separate compatibility/debug integration.
-
-Boundary rules:
-
-- The worker can access local Hermes/Codex credentials if the host is logged in.
-- The Web app should not access those credentials directly.
-- The worker should return structured artifacts, not untracked agent state.
-- Memory writes must go through the same apply/audit path as Hermes runs.
-
-## Current MVP
-
-Create and run a manual text job with the fixture provider:
+Run with fixture provider:
 
 ```bash
-python3 services/signal-radar-worker/worker.py ingest-text \
+npm run signal-radar -- ingest-text \
   --text "英维克液冷业务被市场重新讨论，但需要公告或订单验证。" \
-  --config skills/signal-radar/config.yaml \
+  --config signal-radar.config.json \
   --run \
   --provider fixture
 ```
 
-Run with Codex CLI when you intentionally want a real analysis call:
+Run with Codex CLI:
 
 ```bash
-python3 services/signal-radar-worker/worker.py ingest-text \
+npm run signal-radar -- ingest-text \
   --text-file /path/to/input.txt \
-  --config skills/signal-radar/config.yaml \
+  --config signal-radar.config.json \
   --run \
   --provider codex-cli \
   --model gpt-5.4
 ```
 
-For regression tests that should not call the external Codex service, set
-`XRADAR_CODEX_BIN` to a local shim that implements `codex exec
---output-last-message <path>`.
+For regression tests that should not call external Codex services, set `XRADAR_CODEX_BIN` to a local shim that implements:
 
-The worker writes:
+```text
+codex exec --output-last-message <path>
+```
 
-- job state under `data/jobs/<job_id>/`
-- `collector_batch_<job_id>.json` under the configured report directory
-- `analysis_input`, `prompt`, `report`, `summary`, `memory_update`, `run_metrics`
-- memory audit records through `signal_radar_core.memory_application`
-
-Run the local regression smoke checks against temp memory only:
+Run local smoke checks:
 
 ```bash
-python3 scripts/signal_radar_smoke.py
+npm run smoke
 ```

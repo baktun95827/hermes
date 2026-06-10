@@ -1,0 +1,24 @@
+{
+  "base_dir": "data/signal-radar",
+  "accounts": [],
+  "discovery": {
+    "enabled": false,
+    "min_interactions": 3
+  },
+  "memory_backend": "file",
+  "state_file": "memory/state.json",
+  "memory_dir": "memory",
+  "output_dir": "reports",
+  "latest_run_file": "latest_run.json",
+  "themes": [
+    "个股/公司",
+    "宏观经济",
+    "地缘政治",
+    "能源/大宗商品",
+    "AI/人工智能",
+    "加密货币/区块链",
+    "科技行业"
+  ],
+  "theme_aliases": {},
+  "secondary_theme_aliases": {}
+}
